@@ -35,19 +35,6 @@ const dealerships = [
     website: "https://kaiyi.ae/",
   },
   {
-    name: "Li Auto",
-    image: "https://cdn.legendholding.com/images/cloudinary/cloudinary_683da13c415753.52591286_20250602_130356.jpg",
-    logo: "https://cdn.legendholding.com/images/cloudinary_68624c253a47c8.16394139_20250630_083445.svg",
-    description:
-      "Legend Motors serves as the official sales partner and authorized provider of after-sales service and maintenance for Li Auto vehicles across the UAE.",
-    detailedContent: [
-      "Legend Motors is the official sales partner and authorized provider of after-sales service and maintenance for Li Auto vehicles across the UAE.",
-      "Launching the first showroom in Dubai in July, there is an increasing surge in customer interest and engagement."
-    ],
-    imagePosition: "50% center",
-    website: "https://www.liautouae.com/",
-  },
-  {
     name: "Skywell",
     image: "https://cdn.legendholding.com/images/cloudinary/cloudinary_683da0668d4af4.97651620_20250602_130022.jpg",
     logo: "https://cdn.legendholding.com/images/cdn_68624b1e8f5a30.76588960_20250630_083022.png",
