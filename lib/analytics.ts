@@ -1,11 +1,10 @@
 // Analytics Configuration for Legend Holding Group
 // This file contains all tracking configurations for various platforms
 
-// Allowed hostnames — analytics will only fire on these domains
+// Allowed hostnames — analytics will only fire on these domains (NOT on Vercel preview URLs)
 export const ALLOWED_HOSTNAMES = [
   'legendholding.com',
   'www.legendholding.com',
-  'legend-holding-website.vercel.app',
 ];
 
 export const isAllowedHostname = (): boolean => {
