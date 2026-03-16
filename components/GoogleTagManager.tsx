@@ -1,8 +1,8 @@
 'use client';
 
 import Script from 'next/script';
-import { useEffect } from 'react';
-import { ANALYTICS_CONFIG } from '@/lib/analytics';
+import { useEffect, useState } from 'react';
+import { ANALYTICS_CONFIG, isAllowedHostname } from '@/lib/analytics';
 
 interface GoogleTagManagerProps {
   gtmId?: string;
@@ -10,22 +10,29 @@ interface GoogleTagManagerProps {
 
 export default function GoogleTagManager({ gtmId }: GoogleTagManagerProps) {
   const gtmIdToUse = gtmId || ANALYTICS_CONFIG.GTM_ID;
+  const [hostnameAllowed, setHostnameAllowed] = useState(false);
 
   useEffect(() => {
-    // Initialize Google Tag Manager with error handling
-    if (typeof window !== 'undefined') {
-      try {
-        window.dataLayer = window.dataLayer || [];
-        window.dataLayer.push({
-          'gtm.start': new Date().getTime(),
-          event: 'gtm.js',
-        });
-      } catch (error) {
-        // Silently handle initialization errors to prevent console pollution
-        console.debug('GTM initialization skipped:', error);
-      }
+    const allowed = isAllowedHostname();
+    setHostnameAllowed(allowed);
+
+    if (!allowed) {
+      console.debug('Analytics blocked: hostname not in allowed list');
+      return;
+    }
+
+    try {
+      window.dataLayer = window.dataLayer || [];
+      window.dataLayer.push({
+        'gtm.start': new Date().getTime(),
+        event: 'gtm.js',
+      });
+    } catch (error) {
+      console.debug('GTM initialization skipped:', error);
     }
   }, []);
+
+  if (!hostnameAllowed) return null;
 
   return (
     <>

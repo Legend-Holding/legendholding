@@ -1,6 +1,20 @@
 // Analytics Configuration for Legend Holding Group
 // This file contains all tracking configurations for various platforms
 
+// Allowed hostnames — analytics will only fire on these domains
+export const ALLOWED_HOSTNAMES = [
+  'legendholding.com',
+  'www.legendholding.com',
+  'legend-holding-website.vercel.app',
+];
+
+export const isAllowedHostname = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  return ALLOWED_HOSTNAMES.some(
+    (host) => window.location.hostname === host || window.location.hostname.endsWith('.' + host)
+  );
+};
+
 export const ANALYTICS_CONFIG = {
   // Google Tag Manager
   GTM_ID: process.env.NEXT_PUBLIC_GTM_ID || 'GTM-K8GMBZG5',
@@ -90,7 +104,7 @@ const isTikTokPixelReady = (): boolean => {
 
 // Event tracking functions
 export const trackEvent = (eventName: string, parameters?: Record<string, any>) => {
-  if (typeof window !== 'undefined') {
+  if (typeof window !== 'undefined' && isAllowedHostname()) {
     try {
       if (window.gtag) {
         window.gtag('event', eventName, parameters);
@@ -135,7 +149,7 @@ export const trackPageView = (pageName: string, pagePath?: string) => {
   if (isExcluded) return;
 
   // Use standard PageView for Meta Pixel, custom event for others
-  if (typeof window !== 'undefined') {
+  if (typeof window !== 'undefined' && isAllowedHostname()) {
     // Google Analytics
     try {
       if (window.gtag) {
