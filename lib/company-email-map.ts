@@ -28,7 +28,7 @@ export const BUSINESS_HEAD_EMAIL_MAP: Record<string, string> = {
   "Legend Motorcycles - Lifan": "baz@legendholding.com",
   "Legend Rent a Car": "pawan.rathi@legendrentacar.com",
   "Legend Auto Services": "tamer.khalil@legendmotorsuae.com",
-  "Legend Travel and Tourism": "waseem.k@legendholding.com",
+  "Legend Travel and Tourism": "sky.martires@legendtravels.com",
   "Legend Green Energy Solutions": "baz@legendholding.com",
   "Legend X": "jerrical.dai@legendmotorsuae.com",
   "Zul Energy": "jade.li@zulenergy.com",

@@ -451,8 +451,8 @@ export async function GET(request: Request) {
       }
     }
 
-    // Process 6-day escalation to complaints@legendholding.com (after business head was notified)
-    const holdingInboxEmail = 'complaints@legendholding.com';
+    // Process 6-day escalation to holding (after business head was notified)
+    const holdingInboxEmail = 'jonathan.stretton@legendholding.com';
     for (const complaint of holdingEscalationList) {
       try {
         const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
