@@ -3,6 +3,12 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
 export async function middleware(req: NextRequest) {
+  // Block .html extension requests from spam/malware bots.
+  // These never correspond to real pages and only pollute analytics.
+  if (req.nextUrl.pathname.endsWith('.html')) {
+    return new NextResponse(null, { status: 404 })
+  }
+
   try {
     const res = NextResponse.next()
     const supabase = createMiddlewareClient({ req, res })
@@ -59,6 +65,8 @@ export const config = {
     '/admin/customer-care',
     '/admin/management-profiles',
     '/admin/team-members',
-    '/company/dashboard'
+    '/company/dashboard',
+    // Intercept all .html requests (spam/bot traffic) before GA fires
+    '/((?!_next/static|_next/image|favicon\\.ico).+\\.html)',
   ],
 } 

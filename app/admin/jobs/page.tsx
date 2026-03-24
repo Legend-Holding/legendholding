@@ -20,7 +20,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { UnauthorizedAccess } from "@/components/admin/unauthorized-access"
-import { useAdminPermissions } from "@/hooks/use-admin-permissions"
+import { useAdminPermissions, clearPermissionsCache } from "@/hooks/use-admin-permissions"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 interface Job {
@@ -484,6 +484,7 @@ export default function JobsManagement() {
 
   const handleSignOut = async () => {
     try {
+      clearPermissionsCache()
       const { error } = await supabase.auth.signOut()
       
       // Clear any local storage

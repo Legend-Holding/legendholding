@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Eye, Trash2, Download, Search } from "lucide-react"
+import { Eye, Trash2, Download, Search, ChevronLeft, ChevronRight } from "lucide-react"
 import { toast } from "sonner"
 import Link from "next/link"
 import { Input } from "@/components/ui/input"
@@ -28,7 +28,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { useRouter } from "next/navigation"
 import { AdminDashboardLayout } from "@/components/admin/dashboard-layout"
 import { UnauthorizedAccess } from "@/components/admin/unauthorized-access"
-import { useAdminPermissions } from "@/hooks/use-admin-permissions"
+import { useAdminPermissions, clearPermissionsCache } from "@/hooks/use-admin-permissions"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -66,16 +66,15 @@ export default function ApplicationsPage() {
   const [applications, setApplications] = useState<JobApplication[]>([])
   const [jobs, setJobs] = useState<Job[]>([])
   const [loading, setLoading] = useState(true)
-  const [loadingMore, setLoadingMore] = useState(false)
-  const [filtering, setFiltering] = useState(false) // Loading state for filter changes
+  const [filtering, setFiltering] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
   const [statusFilter, setStatusFilter] = useState<string>("all")
   const [jobFilter, setJobFilter] = useState<string>("active")
   const [viewMode, setViewMode] = useState<"table" | "grouped">("table")
-  const [pageSize] = useState(50) // Reduced limit for faster load
-  const [hasMore, setHasMore] = useState(false)
+  const PAGE_SIZE = 10
+  const [currentPage, setCurrentPage] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
-  const [filteredCount, setFilteredCount] = useState(0) // Count with job/status filters applied
+  const [filteredCount, setFilteredCount] = useState(0)
   const [statusCounts, setStatusCounts] = useState({
     pending: 0,
     reviewed: 0,
@@ -91,281 +90,167 @@ export default function ApplicationsPage() {
     previousStatus: string
   } | null>(null)
   const userRoleCache = useRef<{ userId: string; role: string } | null>(null)
-  const fetchIdRef = useRef(0) // Incremented on each fetch to discard stale results
+  const jobIdsCache = useRef<{ filter: string; ids: string[] } | null>(null)
+  const jobMapCache = useRef<Map<string, Job>>(new Map())
+  const fetchIdRef = useRef(0)
   const supabase = createClientComponentClient()
 
   useEffect(() => {
-    fetchApplications()
+    fetchApplications(1)
     fetchJobs()
   }, [])
 
-
-  // Refetch applications when filters change (skip initial mount)
+  // Refetch when filters change (skip initial mount)
   const isInitialMount = useRef(true)
   useEffect(() => {
     if (isInitialMount.current) {
       isInitialMount.current = false
       return
     }
-    // Clear previous data immediately to avoid showing stale data
     setApplications([])
     setFilteredCount(0)
-    setStatusCounts({
-      pending: 0,
-      reviewed: 0,
-      shortlisted: 0,
-      rejected: 0,
-      hired: 0
-    })
-    setStatusCountsLoading(true) // Show loading for status counts
-    setFiltering(true) // Show loading state for filter changes
-    fetchApplications(0) // Reset to first page when filters change
+    setStatusCounts({ pending: 0, reviewed: 0, shortlisted: 0, rejected: 0, hired: 0 })
+    setStatusCountsLoading(true)
+    setFiltering(true)
+    setCurrentPage(1)
+    jobIdsCache.current = null
+    fetchApplications(1)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobFilter, statusFilter])
 
-  const fetchApplications = async (offset: number = 0) => {
-    // Each call gets an ID; if a newer call starts, this one stops updating state
+  const fetchApplications = async (page: number = 1) => {
     const currentFetchId = ++fetchIdRef.current
+    const offset = (page - 1) * PAGE_SIZE
 
     try {
-      // Get current user (cached in session)
-      const { data: { user } } = await supabase.auth.getUser()
-      
-      if (!user) {
-        toast.error('User not authenticated')
-        setLoading(false)
-        setFiltering(false)
-        return
-      }
-
-      // Get user role (cached for performance)
-      let userRole: string
-      if (userRoleCache.current && userRoleCache.current.userId === user.id) {
-        userRole = userRoleCache.current.role
+      // --- Auth + role (cached after first call) ---
+      let userId: string
+      let role: string
+      if (userRoleCache.current) {
+        userId = userRoleCache.current.userId
+        role = userRoleCache.current.role
       } else {
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) { toast.error('User not authenticated'); setLoading(false); setFiltering(false); return }
+        userId = user.id
         const { data: roleData, error: roleError } = await supabase
-          .from('user_roles')
-          .select('role')
-          .eq('user_id', user.id)
-          .single()
-
-        if (roleError || !roleData) {
-          console.error('Error fetching user role:', roleError)
-          toast.error('Unable to determine user role')
-          setLoading(false)
-          setFiltering(false)
-          return
-        }
-        userRole = roleData.role
-        userRoleCache.current = { userId: user.id, role: userRole }
+          .from('user_roles').select('role').eq('user_id', user.id).single()
+        if (roleError || !roleData) { toast.error('Unable to determine user role'); setLoading(false); setFiltering(false); return }
+        role = roleData.role
+        userRoleCache.current = { userId: user.id, role: role }
       }
 
-      // Get user job IDs - filter by job dropdown (active / inactive / specific job)
+      // --- Job IDs for filtering (cached per filter value) ---
       const isSpecificJob = jobFilter !== 'active' && jobFilter !== 'inactive'
       let userJobIds: string[] | null = null
 
       if (isSpecificJob) {
         userJobIds = [jobFilter]
-      } else if (userRole === 'super_admin') {
-        const { data: jobsByStatus } = await supabase
-          .from('jobs')
-          .select('id')
-          .eq('status', jobFilter)
+      } else if (jobIdsCache.current?.filter === jobFilter) {
+        userJobIds = jobIdsCache.current.ids
+      } else if (role === 'super_admin') {
+        const { data: jobsByStatus } = await supabase.from('jobs').select('id').eq('status', jobFilter)
         userJobIds = jobsByStatus?.map(j => j.id) || []
-        if (userJobIds.length === 0) {
-          setApplications([])
-          setTotalCount(0)
-          setFilteredCount(0)
-          setStatusCounts({ pending: 0, reviewed: 0, shortlisted: 0, rejected: 0, hired: 0 })
-          setHasMore(false)
-          setLoading(false)
-          setFiltering(false)
-          setStatusCountsLoading(false)
-          return
-        }
-      } else if (userRole === 'admin') {
-        const { data: createdJobs } = await supabase
-          .from('jobs')
-          .select('id')
-          .eq('created_by', user.id)
-          .eq('status', jobFilter)
-        
-        const { data: assignedJobs } = await supabase
-          .from('jobs')
-          .select('id')
-          .eq('assigned_to', user.id)
-          .eq('status', jobFilter)
-        
-        const createdIds = createdJobs?.map(job => job.id) || []
-        const assignedIds = assignedJobs?.map(job => job.id) || []
-        userJobIds = [...new Set([...createdIds, ...assignedIds])]
-        
-        if (userJobIds.length === 0) {
-          setApplications([])
-          setTotalCount(0)
-          setFilteredCount(0)
-          setStatusCounts({ pending: 0, reviewed: 0, shortlisted: 0, rejected: 0, hired: 0 })
-          setHasMore(false)
-          setLoading(false)
-          setFiltering(false)
-          setStatusCountsLoading(false)
-          return
-        }
+        jobIdsCache.current = { filter: jobFilter, ids: userJobIds }
+      } else {
+        const [{ data: created }, { data: assigned }] = await Promise.all([
+          supabase.from('jobs').select('id').eq('created_by', userId).eq('status', jobFilter),
+          supabase.from('jobs').select('id').eq('assigned_to', userId).eq('status', jobFilter)
+        ])
+        userJobIds = [...new Set([...(created?.map(j => j.id) || []), ...(assigned?.map(j => j.id) || [])])]
+        jobIdsCache.current = { filter: jobFilter, ids: userJobIds }
       }
 
-      // Determine if filters are active
+      if (userJobIds && userJobIds.length === 0) {
+        setApplications([]); setTotalCount(0); setFilteredCount(0)
+        setStatusCounts({ pending: 0, reviewed: 0, shortlisted: 0, rejected: 0, hired: 0 })
+        setCurrentPage(1); setLoading(false); setFiltering(false); setStatusCountsLoading(false)
+        return
+      }
+
+      // --- Data query: NO JOIN, plain columns only (fastest possible) ---
       const isFiltered = isSpecificJob || statusFilter !== "all"
 
-      // STEP 1: Fetch data WITHOUT count (fast — no full table scan)
       let dataQuery = supabase
         .from('job_applications')
-        .select(`
-          id,
-          job_id,
-          full_name,
-          email,
-          phone,
-          resume_url,
-          cover_letter,
-          status,
-          created_at,
-          job:jobs(id, title, department)
-        `)
+        .select('id, job_id, full_name, email, phone, resume_url, cover_letter, status, created_at')
         .order('created_at', { ascending: false })
-        .range(offset, offset + pageSize - 1)
+        .range(offset, offset + PAGE_SIZE - 1)
 
-      if (userJobIds && userJobIds.length > 0) {
-        dataQuery = dataQuery.in('job_id', userJobIds)
-      }
-      if (isSpecificJob) {
-        dataQuery = dataQuery.eq('job_id', jobFilter)
-      }
-      if (statusFilter === "all") {
-        dataQuery = dataQuery.neq('status', 'rejected')
-      } else {
-        dataQuery = dataQuery.eq('status', statusFilter)
-      }
+      if (userJobIds && userJobIds.length > 0) dataQuery = dataQuery.in('job_id', userJobIds)
+      if (isSpecificJob) dataQuery = dataQuery.eq('job_id', jobFilter)
+      if (statusFilter === "all") { dataQuery = dataQuery.neq('status', 'rejected') }
+      else { dataQuery = dataQuery.eq('status', statusFilter) }
 
       const { data: applicationsData, error: applicationsError } = await dataQuery
-
-      if (applicationsError) {
-        console.error('Applications query error:', applicationsError)
-        throw applicationsError
-      }
-
-      // Discard result if a newer fetch was started while this one was in-flight
+      if (applicationsError) throw applicationsError
       if (currentFetchId !== fetchIdRef.current) return
 
-      // Set data immediately for fast display
+      // --- Enrich with job info from cache or quick batch fetch ---
       if (applicationsData) {
-        const transformedData: JobApplication[] = applicationsData.map((app: any) => ({
+        const missingJobIds = [...new Set(applicationsData.map(a => a.job_id))]
+          .filter(id => !jobMapCache.current.has(id))
+
+        if (missingJobIds.length > 0) {
+          const { data: jobsData } = await supabase
+            .from('jobs').select('id, title, department').in('id', missingJobIds)
+          jobsData?.forEach(j => jobMapCache.current.set(j.id, j))
+        }
+
+        const transformedData: JobApplication[] = applicationsData.map(app => ({
           ...app,
-          job: Array.isArray(app.job) ? app.job[0] : app.job
+          job: jobMapCache.current.get(app.job_id) || undefined
         }))
 
-        if (offset === 0) {
-          setApplications(transformedData)
-        } else {
-          setApplications(prev => [...prev, ...transformedData])
-        }
-
-        // Estimate hasMore from batch size (will be corrected when count arrives)
-        setHasMore(transformedData.length === pageSize)
-
-        // Clear filtering state immediately — data is visible
+        setApplications(transformedData)
+        setCurrentPage(page)
         setFiltering(false)
 
-        // For load-more (offset > 0), we only needed the data
-        if (offset > 0) {
-          setStatusCountsLoading(false)
-          setLoading(false)
-          return
-        }
+        if (page > 1) { setStatusCountsLoading(false); setLoading(false); return }
       }
 
-      // STEP 2 (background, non-blocking): Fetch count + status counts in parallel
-      if (offset === 0) {
+      // --- Background counts (page 1 only, non-blocking) ---
+      if (page === 1) {
         const fetchCounts = async () => {
           try {
-            // Build a lightweight count query (head: true, no join)
-            let countQuery = supabase
-              .from('job_applications')
-              .select('id', { count: 'exact', head: true })
-
-            if (userJobIds && userJobIds.length > 0) {
-              countQuery = countQuery.in('job_id', userJobIds)
-            }
-            if (isSpecificJob) {
-              countQuery = countQuery.eq('job_id', jobFilter)
-            }
-            if (statusFilter === "all") {
-              countQuery = countQuery.neq('status', 'rejected')
-            } else {
-              countQuery = countQuery.eq('status', statusFilter)
+            const applyFilters = (q: any) => {
+              if (userJobIds && userJobIds.length > 0) q = q.in('job_id', userJobIds)
+              if (isSpecificJob) q = q.eq('job_id', jobFilter)
+              return q
             }
 
-            // Status count queries (also head-only, no join)
+            let countQ = applyFilters(supabase.from('job_applications').select('id', { count: 'exact', head: true }))
+            if (statusFilter === "all") countQ = countQ.neq('status', 'rejected')
+            else countQ = countQ.eq('status', statusFilter)
+
             const statusNames = ['pending', 'reviewed', 'shortlisted', 'rejected', 'hired'] as const
-            const statusPromises = statusNames.map(status => {
-              let sq = supabase
-                .from('job_applications')
-                .select('id', { count: 'exact', head: true })
-                .eq('status', status)
-              if (userJobIds && userJobIds.length > 0) {
-                sq = sq.in('job_id', userJobIds)
-              }
-              if (isSpecificJob) {
-                sq = sq.eq('job_id', jobFilter)
-              }
-              return sq
-            })
+            const statusQs = statusNames.map(s =>
+              applyFilters(supabase.from('job_applications').select('id', { count: 'exact', head: true }).eq('status', s))
+            )
 
-            // Fire count + all status counts in parallel
-            const [countResult, ...statusResults] = await Promise.all([countQuery, ...statusPromises])
-
-            const currentCount = countResult?.count || 0
-            const loadedSoFar = applicationsData?.length || 0
-
-            if (isFiltered) {
-              setFilteredCount(currentCount)
-            } else {
-              setTotalCount(currentCount)
-              setFilteredCount(currentCount)
-            }
-            setHasMore(loadedSoFar === pageSize && loadedSoFar < currentCount)
-
+            const [countRes, ...statusRes] = await Promise.all([countQ, ...statusQs])
+            const cnt = countRes?.count || 0
+            if (isFiltered) { setFilteredCount(cnt) } else { setTotalCount(cnt); setFilteredCount(cnt) }
             setStatusCounts({
-              pending: statusResults[0]?.count || 0,
-              reviewed: statusResults[1]?.count || 0,
-              shortlisted: statusResults[2]?.count || 0,
-              rejected: statusResults[3]?.count || 0,
-              hired: statusResults[4]?.count || 0
+              pending: statusRes[0]?.count || 0, reviewed: statusRes[1]?.count || 0,
+              shortlisted: statusRes[2]?.count || 0, rejected: statusRes[3]?.count || 0,
+              hired: statusRes[4]?.count || 0
             })
             setStatusCountsLoading(false)
-          } catch (err) {
-            console.error('Error fetching counts:', err)
-            setStatusCountsLoading(false)
-          }
+          } catch (err) { console.error('Error fetching counts:', err); setStatusCountsLoading(false) }
         }
-
-        // Non-blocking
         fetchCounts()
 
-        // If filtered, also get unfiltered total in background
         if (isFiltered && totalCount === 0) {
-          const fetchTotalCount = async () => {
+          const fetchTotal = async () => {
             try {
               let tq = supabase.from('job_applications').select('id', { count: 'exact', head: true }).neq('status', 'rejected')
-              if (userJobIds && userJobIds.length > 0) {
-                tq = tq.in('job_id', userJobIds)
-              }
+              if (userJobIds && userJobIds.length > 0) tq = tq.in('job_id', userJobIds)
               const { count } = await tq
               setTotalCount(count || 0)
-            } catch (err) {
-              console.error('Error fetching total count:', err)
-            }
+            } catch (err) { console.error('Error fetching total count:', err) }
           }
-          fetchTotalCount()
+          fetchTotal()
         }
       }
     } catch (error: any) {
@@ -402,7 +287,6 @@ export default function ApplicationsPage() {
               job: jobMap.get(app.job_id) || undefined
             }))
             setApplications(transformedLimitedData)
-            // Calculate status counts from limited data as fallback
             setStatusCounts({
               pending: transformedLimitedData.filter(app => app.status === 'pending').length,
               reviewed: transformedLimitedData.filter(app => app.status === 'reviewed').length,
@@ -412,7 +296,7 @@ export default function ApplicationsPage() {
             })
             setTotalCount(transformedLimitedData.length)
             setFilteredCount(transformedLimitedData.length)
-            setHasMore(false)
+            setCurrentPage(1)
             setStatusCountsLoading(false)
             toast.success('Loaded recent applications')
             return
@@ -433,16 +317,12 @@ export default function ApplicationsPage() {
     }
   }
 
-  const loadMoreApplications = async () => {
-    setLoadingMore(true)
-    try {
-      await fetchApplications(applications.length)
-    } catch (error) {
-      console.error('Error loading more applications:', error)
-      toast.error('Failed to load more applications')
-    } finally {
-      setLoadingMore(false)
-    }
+  const goToPage = (page: number) => {
+    const totalPages = Math.ceil(filteredCount / PAGE_SIZE) || 1
+    if (page < 1 || page > totalPages) return
+    setFiltering(true)
+    setApplications([])
+    fetchApplications(page)
   }
 
   const fetchJobs = async () => {
@@ -475,7 +355,10 @@ export default function ApplicationsPage() {
           .order('title', { ascending: true })
         
         if (jobsError) throw jobsError
-        if (jobsData) setJobs(jobsData)
+        if (jobsData) {
+          setJobs(jobsData)
+          jobsData.forEach(j => jobMapCache.current.set(j.id, j))
+        }
       } else {
         const { data: createdJobs } = await supabase
           .from('jobs')
@@ -493,7 +376,9 @@ export default function ApplicationsPage() {
         const uniqueJobs = allJobs.filter((job, index, self) =>
           index === self.findIndex((j) => j.id === job.id)
         )
-        setJobs(uniqueJobs.sort((a, b) => a.title.localeCompare(b.title)))
+        const sorted = uniqueJobs.sort((a, b) => a.title.localeCompare(b.title))
+        setJobs(sorted)
+        sorted.forEach(j => jobMapCache.current.set(j.id, j))
       }
     } catch (error) {
       console.error('Error fetching jobs:', error)
@@ -937,26 +822,22 @@ export default function ApplicationsPage() {
   }, {} as Record<string, { job: Job, applications: JobApplication[] }>)
 
   const getApplicationStats = () => {
-    // When filters are active, use filteredCount from database; otherwise use totalCount
     const isFiltered = (jobFilter !== "active" && jobFilter !== "inactive") || statusFilter !== "all"
-    
-    // Use status counts from database (not from loaded applications)
-    // These counts reflect the total in the database, not just the visible 100
-    const stats = {
-      total: isFiltered ? filteredCount : totalCount, // Use filtered count from DB when filters are active
-      loaded: applications.length, // Number currently loaded from database
+    return {
+      total: isFiltered ? filteredCount : totalCount,
       pending: statusCounts.pending,
       reviewed: statusCounts.reviewed,
       shortlisted: statusCounts.shortlisted,
       rejected: statusCounts.rejected,
       hired: statusCounts.hired,
     }
-    return stats
   }
+
+  const totalPages = Math.ceil(filteredCount / PAGE_SIZE) || 1
 
   const handleSignOut = async () => {
     try {
-      console.log('Signing out from applications...')
+      clearPermissionsCache()
       const { error } = await supabase.auth.signOut()
       if (error) {
         console.error('Sign out error:', error)
@@ -1182,14 +1063,7 @@ export default function ApplicationsPage() {
                   <div className="w-2 h-2 rounded-full bg-gray-900 animate-bounce" style={{ animationDelay: '400ms', animationDuration: '1.4s' }}></div>
                 </div>
               ) : (
-                <>
-                  <div className="text-2xl font-bold">{stats.total}</div>
-                  {stats.loaded < stats.total && (
-                    <div className="text-xs text-gray-500 mt-1">
-                      {stats.loaded} loaded
-                    </div>
-                  )}
-                </>
+                <div className="text-2xl font-bold">{stats.total}</div>
               )}
             </CardContent>
           </Card>
@@ -1313,17 +1187,43 @@ export default function ApplicationsPage() {
               </TableBody>
             </Table>
             
-            {/* Load More Button */}
-            {hasMore && (
-              <div className="mt-6 text-center">
-                <Button
-                  onClick={loadMoreApplications}
-                  disabled={loadingMore}
-                  variant="outline"
-                  size="lg"
-                >
-                  {loadingMore ? 'Loading...' : `Load More (${applications.length} of ${(jobFilter !== "active" && jobFilter !== "inactive") || statusFilter !== "all" ? filteredCount : totalCount})`}
-                </Button>
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between border-t px-4 py-3">
+                <p className="text-sm text-muted-foreground">
+                  Showing {((currentPage - 1) * PAGE_SIZE) + 1}–{Math.min(currentPage * PAGE_SIZE, filteredCount)} of {filteredCount}
+                </p>
+                <div className="flex items-center gap-1">
+                  <Button variant="outline" size="sm" disabled={currentPage === 1 || filtering} onClick={() => goToPage(currentPage - 1)}>
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  {Array.from({ length: totalPages }, (_, i) => i + 1)
+                    .filter(p => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 2)
+                    .reduce<(number | 'ellipsis')[]>((acc, p, i, arr) => {
+                      if (i > 0 && p - (arr[i - 1] as number) > 1) acc.push('ellipsis')
+                      acc.push(p)
+                      return acc
+                    }, [])
+                    .map((item, i) =>
+                      item === 'ellipsis' ? (
+                        <span key={`e${i}`} className="px-2 text-muted-foreground">…</span>
+                      ) : (
+                        <Button
+                          key={item}
+                          variant={currentPage === item ? "default" : "outline"}
+                          size="sm"
+                          className="min-w-[36px]"
+                          disabled={filtering}
+                          onClick={() => goToPage(item as number)}
+                        >
+                          {item}
+                        </Button>
+                      )
+                    )}
+                  <Button variant="outline" size="sm" disabled={currentPage === totalPages || filtering} onClick={() => goToPage(currentPage + 1)}>
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
             )}
           </div>
@@ -1446,17 +1346,43 @@ export default function ApplicationsPage() {
               </Card>
             )}
             
-            {/* Load More Button for Grouped View */}
-            {hasMore && Object.keys(groupedApplications).length > 0 && (
-              <div className="mt-6 text-center">
-                <Button
-                  onClick={loadMoreApplications}
-                  disabled={loadingMore}
-                  variant="outline"
-                  size="lg"
-                >
-                  {loadingMore ? 'Loading...' : `Load More (${applications.length} of ${(jobFilter !== "active" && jobFilter !== "inactive") || statusFilter !== "all" ? filteredCount : totalCount})`}
-                </Button>
+            {/* Pagination for Grouped View */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between bg-white rounded-lg shadow px-4 py-3">
+                <p className="text-sm text-muted-foreground">
+                  Showing {((currentPage - 1) * PAGE_SIZE) + 1}–{Math.min(currentPage * PAGE_SIZE, filteredCount)} of {filteredCount}
+                </p>
+                <div className="flex items-center gap-1">
+                  <Button variant="outline" size="sm" disabled={currentPage === 1 || filtering} onClick={() => goToPage(currentPage - 1)}>
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  {Array.from({ length: totalPages }, (_, i) => i + 1)
+                    .filter(p => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 2)
+                    .reduce<(number | 'ellipsis')[]>((acc, p, i, arr) => {
+                      if (i > 0 && p - (arr[i - 1] as number) > 1) acc.push('ellipsis')
+                      acc.push(p)
+                      return acc
+                    }, [])
+                    .map((item, i) =>
+                      item === 'ellipsis' ? (
+                        <span key={`e${i}`} className="px-2 text-muted-foreground">…</span>
+                      ) : (
+                        <Button
+                          key={item}
+                          variant={currentPage === item ? "default" : "outline"}
+                          size="sm"
+                          className="min-w-[36px]"
+                          disabled={filtering}
+                          onClick={() => goToPage(item as number)}
+                        >
+                          {item}
+                        </Button>
+                      )
+                    )}
+                  <Button variant="outline" size="sm" disabled={currentPage === totalPages || filtering} onClick={() => goToPage(currentPage + 1)}>
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
             )}
           </div>

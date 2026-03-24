@@ -6,7 +6,7 @@ import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
 import { AdminDashboardLayout } from "@/components/admin/dashboard-layout"
 import { DashboardCards } from "@/components/admin/dashboard-card"
 import { UnauthorizedAccess } from "@/components/admin/unauthorized-access"
-import { useAdminPermissions } from "@/hooks/use-admin-permissions"
+import { useAdminPermissions, clearPermissionsCache } from "@/hooks/use-admin-permissions"
 import { Skeleton } from "@/components/ui/skeleton"
 import { toast } from "sonner"
 
@@ -82,7 +82,7 @@ export function DashboardClient() {
 
   const handleSignOut = async () => {
     try {
-      console.log('Signing out...')
+      clearPermissionsCache()
       const { error } = await supabase.auth.signOut()
       if (error) {
         console.error('Sign out error:', error)

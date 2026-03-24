@@ -57,87 +57,75 @@ export interface AdminPermissions {
   canAccess: (path: string) => boolean
 }
 
+// Module-level cache: persists across component mounts so tab switches are instant
+let _cachedRole: UserRole | null = null
+let _cachePromise: Promise<void> | null = null
+
+const SUPER_ADMIN_EMAILS = ['mufeed.rahman@legendholding.com', 'sonam.lama@legendholding.com']
+
+/** Call on sign-out to clear cached permissions */
+export function clearPermissionsCache() {
+  _cachedRole = null
+  _cachePromise = null
+}
+
+function buildFallbackRole(user: { id: string; email?: string | null }): UserRole {
+  const email = user.email || ''
+  const isSA = SUPER_ADMIN_EMAILS.includes(email)
+  const isBCOnly = email === BUSINESS_CARDS_ONLY_ADMIN_EMAIL
+  return {
+    id: 'fallback',
+    user_id: user.id,
+    email,
+    role: isSA ? 'super_admin' : 'admin',
+    permissions: isBCOnly
+      ? { dashboard: false, submissions: false, news: false, jobs: false, applications: false, newsletters: false, settings: false, customer_care: false, management_profiles: true, team_members: false }
+      : isSA
+        ? { dashboard: true, submissions: true, news: true, jobs: true, applications: true, newsletters: true, settings: true, customer_care: true, management_profiles: true, team_members: true }
+        : { dashboard: true, submissions: false, news: false, jobs: true, applications: true, newsletters: false, settings: false, customer_care: false, management_profiles: false, team_members: false },
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  }
+}
+
 export function useAdminPermissions(): AdminPermissions {
-  const [userRole, setUserRole] = useState<UserRole | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
+  const [userRole, setUserRole] = useState<UserRole | null>(_cachedRole)
+  const [isLoading, setIsLoading] = useState(_cachedRole === null)
   const supabase = createClientComponentClient()
 
   useEffect(() => {
-    fetchUserRole()
+    // If we already have a cached role, use it immediately — no loading state
+    if (_cachedRole) {
+      setUserRole(_cachedRole)
+      setIsLoading(false)
+      return
+    }
+
+    // If another instance is already fetching, wait for it
+    if (_cachePromise) {
+      _cachePromise.then(() => {
+        setUserRole(_cachedRole)
+        setIsLoading(false)
+      })
+      return
+    }
+
+    // First mount across all instances — fetch and cache
+    _cachePromise = fetchUserRole()
+    _cachePromise.then(() => {
+      setUserRole(_cachedRole)
+      setIsLoading(false)
+    })
   }, [])
 
   const fetchUserRole = async () => {
     try {
-      setIsLoading(true)
-      
-      // Get current user with error handling
-      let user = null
-      try {
-        const { data, error } = await supabase.auth.getUser()
-        if (error) {
-          console.error('Auth error:', error)
-          setUserRole(null)
-          return
-        }
-        user = data.user
-      } catch (authError) {
-        console.error('Auth error in try-catch:', authError)
-        setUserRole(null)
-        return
-      }
-      
-      if (!user) {
-        setUserRole(null)
-        return
-      }
+      const { data, error } = await supabase.auth.getUser()
+      if (error || !data.user) { _cachedRole = null; return }
+      const user = data.user
 
-      // Create fallback role based on email
-      const isSuperAdmin = user.email === 'mufeed.rahman@legendholding.com' || user.email === 'sonam.lama@legendholding.com'
-      const isBusinessCardsOnly = user.email === BUSINESS_CARDS_ONLY_ADMIN_EMAIL
-      const fallbackRole: UserRole = {
-        id: 'fallback',
-        user_id: user.id,
-        email: user.email || '',
-        role: isSuperAdmin ? 'super_admin' : 'admin',
-        permissions: isBusinessCardsOnly ? {
-          dashboard: false,
-          submissions: false,
-          news: false,
-          jobs: false,
-          applications: false,
-          newsletters: false,
-          settings: false,
-      customer_care: false,
-      management_profiles: true,
-      team_members: false
-    } : isSuperAdmin ? {
-      dashboard: true,
-      submissions: true,
-      news: true,
-      jobs: true,
-      applications: true,
-      newsletters: true,
-      settings: true,
-      customer_care: true,
-      management_profiles: true,
-      team_members: true
-    } : {
-      dashboard: true,
-      submissions: false,
-      news: false,
-      jobs: true,
-      applications: true,
-      newsletters: false,
-      settings: false,
-      customer_care: false,
-      management_profiles: false,
-      team_members: false
-    },
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }
+      const fallbackRole = buildFallbackRole(user)
 
-      // Try to get user role from database, but don't fail if it doesn't work
       try {
         const { data: roleData, error: roleError } = await supabase
           .from('user_roles')
@@ -146,112 +134,33 @@ export function useAdminPermissions(): AdminPermissions {
           .single()
 
         if (roleError) {
-          // Try to call the function to add missing users
           try {
             await supabase.rpc('add_missing_user_roles')
-            
-            // Try to fetch the user role again
-            const { data: retryRoleData, error: retryError } = await supabase
-              .from('user_roles')
-              .select('*')
-              .eq('user_id', user.id)
-              .single()
-            
-            if (retryRoleData && !retryError) {
-              setUserRole(applyBusinessCardsOnlyOverride(retryRoleData, user.email))
-            } else {
-              setUserRole(fallbackRole)
-            }
-          } catch (functionError) {
-            // Fallback to manual insert
+            const { data: retryData, error: retryErr } = await supabase
+              .from('user_roles').select('*').eq('user_id', user.id).single()
+            _cachedRole = (retryData && !retryErr)
+              ? applyBusinessCardsOnlyOverride(retryData, user.email)
+              : fallbackRole
+          } catch {
             try {
-              const { data: insertData, error: insertError } = await supabase
-                .from('user_roles')
-                .insert([fallbackRole])
-                .select()
-                .single()
-
-              if (insertError) {
-                setUserRole(fallbackRole)
-              } else {
-                setUserRole(applyBusinessCardsOnlyOverride(insertData, user.email))
-              }
-            } catch (insertCatchError) {
-              setUserRole(fallbackRole)
-            }
+              const { data: insertData, error: insertErr } = await supabase
+                .from('user_roles').insert([fallbackRole]).select().single()
+              _cachedRole = insertErr ? fallbackRole : applyBusinessCardsOnlyOverride(insertData, user.email)
+            } catch { _cachedRole = fallbackRole }
           }
         } else if (roleData) {
-          setUserRole(applyBusinessCardsOnlyOverride(roleData, user.email))
+          _cachedRole = applyBusinessCardsOnlyOverride(roleData, user.email)
         } else {
-          setUserRole(fallbackRole)
+          _cachedRole = fallbackRole
         }
-      } catch (dbError) {
-        console.error('Database error in fetchUserRole:', dbError)
-        setUserRole(fallbackRole)
+      } catch {
+        _cachedRole = fallbackRole
       }
-      
-    } catch (error) {
-      console.error('Unexpected error in fetchUserRole:', error)
-      
-      // Last resort fallback
+    } catch {
       try {
         const { data: { user } } = await supabase.auth.getUser()
-        if (user) {
-          const isSuperAdmin = user.email === 'mufeed.rahman@legendholding.com' || user.email === 'sonam.lama@legendholding.com'
-          const isBusinessCardsOnly = user.email === BUSINESS_CARDS_ONLY_ADMIN_EMAIL
-          const fallbackRole: UserRole = {
-            id: 'fallback',
-            user_id: user.id,
-            email: user.email || '',
-            role: isSuperAdmin ? 'super_admin' : 'admin',
-            permissions: isBusinessCardsOnly ? {
-              dashboard: false,
-              submissions: false,
-              news: false,
-              jobs: false,
-              applications: false,
-              newsletters: false,
-              settings: false,
-              customer_care: false,
-              management_profiles: true,
-              team_members: false
-            } : isSuperAdmin ? {
-              dashboard: true,
-              submissions: true,
-              news: true,
-              jobs: true,
-              applications: true,
-              newsletters: true,
-              settings: true,
-              customer_care: true,
-              management_profiles: true,
-              team_members: true
-            } : {
-              dashboard: true,
-              submissions: false,
-              news: false,
-              jobs: true,
-              applications: true,
-              newsletters: false,
-              settings: false,
-              customer_care: false,
-              management_profiles: false,
-              team_members: false
-            },
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          }
-          
-          setUserRole(fallbackRole)
-        } else {
-          setUserRole(null)
-        }
-      } catch (finalError) {
-        console.error('Final fallback error:', finalError)
-        setUserRole(null)
-      }
-    } finally {
-      setIsLoading(false)
+        _cachedRole = user ? buildFallbackRole(user) : null
+      } catch { _cachedRole = null }
     }
   }
 
