@@ -100,6 +100,12 @@ export default function JobsManagement() {
     }
   }, [permissionsLoading, isSuperAdmin])
 
+  const EXCLUDED_FROM_ASSIGNMENT = [
+    'info@legendx.com',
+    'mufeed.rahman@legendholding.com',
+    'admin@legendholding.com'
+  ]
+
   const fetchAdminUsers = async () => {
     try {
       const { data, error } = await supabase
@@ -109,7 +115,8 @@ export default function JobsManagement() {
         .order('email')
       
       if (error) throw error
-      setAdminUsers(data || [])
+      const filtered = (data || []).filter(u => !EXCLUDED_FROM_ASSIGNMENT.includes(u.email))
+      setAdminUsers(filtered)
     } catch (error) {
       console.error('Error fetching admin users:', error)
     }
