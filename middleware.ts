@@ -2,10 +2,45 @@ import { createMiddlewareClient } from '@supabase/auth-helpers-nextjs'
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
+const VALID_ROUTE_PREFIXES = new Set([
+  '/about',
+  '/admin',
+  '/api',
+  '/careers',
+  '/co-founder-approval',
+  '/company',
+  '/contact',
+  '/cookie-policy',
+  '/customer-care',
+  '/finance-review',
+  '/founder-approval',
+  '/home',
+  '/news',
+  '/our-businesses',
+  '/privacy-policy',
+  '/profile',
+  '/robots.txt',
+  '/sitemap',
+  '/sitemap.xml',
+  '/social-profile',
+  '/who-we-are',
+  '/workflow',
+  '/workflow-submissions',
+])
+
+function isValidRoute(pathname: string): boolean {
+  if (pathname === '/') return true
+  const firstSegment = '/' + pathname.split('/')[1]
+  return VALID_ROUTE_PREFIXES.has(firstSegment)
+}
+
 export async function middleware(req: NextRequest) {
-  // Block .html extension requests from spam/malware bots.
-  // These never correspond to real pages and only pollute analytics.
-  if (req.nextUrl.pathname.endsWith('.html')) {
+  const { pathname } = req.nextUrl
+
+  // Block any request that doesn't match a known route prefix.
+  // Spam bots hit random paths like /dublagem-de-hunter-x-hunter-76518
+  // or *.html — these pollute Google Analytics with fake page views.
+  if (!isValidRoute(pathname)) {
     return new NextResponse(null, { status: 404 })
   }
 
@@ -55,18 +90,7 @@ export async function middleware(req: NextRequest) {
 
 export const config = {
   matcher: [
-    '/admin/dashboard', 
-    '/admin/submissions', 
-    '/admin/news', 
-    '/admin/jobs', 
-    '/admin/applications', 
-    '/admin/newsletters', 
-    '/admin/settings',
-    '/admin/customer-care',
-    '/admin/management-profiles',
-    '/admin/team-members',
-    '/company/dashboard',
-    // Intercept all .html requests (spam/bot traffic) before GA fires
-    '/((?!_next/static|_next/image|favicon\\.ico).+\\.html)',
+    // Run on all routes except Next.js internals and static files
+    '/((?!_next/static|_next/image|favicon\\.ico|fonts/|icons/|images/|logo/|tinymce/).*)',
   ],
 } 
