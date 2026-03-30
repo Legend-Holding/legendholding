@@ -64,8 +64,8 @@ export async function middleware(req: NextRequest) {
       return res
     }
 
-    // If there's no session and the user is trying to access admin routes
-    if (!session && req.nextUrl.pathname.startsWith('/admin/')) {
+    // If there's no session and the user is trying to access admin routes (except login itself)
+    if (!session && req.nextUrl.pathname.startsWith('/admin/') && !req.nextUrl.pathname.startsWith('/admin/login')) {
       const redirectUrl = new URL('/admin/login', req.url)
       return NextResponse.redirect(redirectUrl)
     }
@@ -79,8 +79,8 @@ export async function middleware(req: NextRequest) {
     return res
   } catch (error) {
     console.error('Middleware error:', error)
-    // In case of any error, redirect to login if trying to access protected routes
-    if (req.nextUrl.pathname.startsWith('/admin/')) {
+    // In case of any error, redirect to login if trying to access protected routes (except login itself)
+    if (req.nextUrl.pathname.startsWith('/admin/') && !req.nextUrl.pathname.startsWith('/admin/login')) {
       const redirectUrl = new URL('/admin/login', req.url)
       return NextResponse.redirect(redirectUrl)
     }

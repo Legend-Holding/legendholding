@@ -201,7 +201,8 @@ export function useAdminPermissions(): AdminPermissions {
       '/admin/settings': 'settings',
       '/admin/customer-care': 'customer_care',
       '/admin/management-profiles': 'management_profiles',
-      '/admin/team-members': 'team_members'
+      '/admin/team-members': 'team_members',
+      '/admin/user-management': 'dashboard'
     }
 
     const permission = pathPermissions[path]

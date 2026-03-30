@@ -19,7 +19,8 @@ import {
   Shield,
   Headphones,
   Contact,
-  Users
+  Users,
+  UserCog
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -106,6 +107,13 @@ const menuItems = [
     icon: Users,
     href: "/admin/team-members",
     permission: "team_members" as const,
+    superAdminOnly: true
+  },
+  {
+    title: "User Management",
+    icon: UserCog,
+    href: "/admin/user-management",
+    permission: "dashboard" as const,
     superAdminOnly: true
   }
 ]
