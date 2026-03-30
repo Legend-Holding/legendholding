@@ -52,6 +52,9 @@ function getRoleLabel(user: AdminUserRow): string {
     if (user.permissions?.submissions !== true && user.permissions?.news !== true) return "HR Admin"
     return "Super Admin"
   }
+  if (user.permissions?.management_profiles === true && user.permissions?.jobs !== true && user.permissions?.applications !== true) {
+    return "Business Cards Admin"
+  }
   return "Admin"
 }
 
@@ -266,9 +269,11 @@ export default function UserManagementPage() {
                             ? "bg-purple-100 text-purple-700"
                             : label === "HR Admin"
                               ? "bg-amber-100 text-amber-700"
-                              : "bg-blue-100 text-blue-700"
+                              : label === "Business Cards Admin"
+                                ? "bg-teal-100 text-teal-700"
+                                : "bg-blue-100 text-blue-700"
                         }`}>
-                          {label === "Super Admin" ? <ShieldCheck className="h-3 w-3" /> : label === "HR Admin" ? <UserCog className="h-3 w-3" /> : <Shield className="h-3 w-3" />}
+                          {label === "Super Admin" ? <ShieldCheck className="h-3 w-3" /> : label === "HR Admin" || label === "Business Cards Admin" ? <UserCog className="h-3 w-3" /> : <Shield className="h-3 w-3" />}
                           {label}
                         </span>
                       </TableCell>
