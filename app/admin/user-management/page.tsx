@@ -8,7 +8,6 @@ import { useAdminPermissions, type UserRole } from "@/hooks/use-admin-permission
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Switch } from "@/components/ui/switch"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -16,7 +15,7 @@ import {
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog"
-import { Plus, Trash2, Edit2, Loader2, Shield, ShieldCheck, UserCog } from "lucide-react"
+import { Plus, Trash2, Loader2, Shield, ShieldCheck, UserCog } from "lucide-react"
 import { toast } from "sonner"
 
 interface AdminUserRow {
@@ -41,10 +40,49 @@ const PERMISSION_LABELS: { key: string; label: string }[] = [
   { key: "team_members", label: "Team Members" },
 ]
 
-const DEFAULT_ADMIN_PERMISSIONS: Record<string, boolean> = {
-  dashboard: true, jobs: true, applications: true,
-  submissions: false, news: false, newsletters: false,
-  settings: false, customer_care: false, management_profiles: false, team_members: false,
+type RolePreset = "super_admin" | "admin" | "hr_admin"
+
+const ROLE_PRESETS: { value: RolePreset; label: string; description: string }[] = [
+  { value: "super_admin", label: "Super Admin", description: "Full access to all features" },
+  { value: "admin", label: "Admin", description: "Jobs Management & Job Applications only" },
+  { value: "hr_admin", label: "HR Admin", description: "All jobs across admins, assign jobs, manage applications" },
+]
+
+function presetToRoleAndPermissions(preset: RolePreset): { role: "super_admin" | "admin"; permissions: Record<string, boolean> } {
+  const allTrue: Record<string, boolean> = Object.fromEntries(PERMISSION_LABELS.map(p => [p.key, true]))
+  allTrue.settings = true
+
+  switch (preset) {
+    case "super_admin":
+      return { role: "super_admin", permissions: allTrue }
+    case "hr_admin":
+      return {
+        role: "super_admin",
+        permissions: {
+          dashboard: true, jobs: true, applications: true,
+          submissions: false, news: false, newsletters: false,
+          settings: false, customer_care: false, management_profiles: false, team_members: false,
+        },
+      }
+    case "admin":
+    default:
+      return {
+        role: "admin",
+        permissions: {
+          dashboard: true, jobs: true, applications: true,
+          submissions: false, news: false, newsletters: false,
+          settings: false, customer_care: false, management_profiles: false, team_members: false,
+        },
+      }
+  }
+}
+
+function detectPreset(user: AdminUserRow): RolePreset {
+  if (user.role === "super_admin") {
+    const hasExplicitFalse = PERMISSION_LABELS.some(p => user.permissions?.[p.key] === false)
+    return hasExplicitFalse ? "hr_admin" : "super_admin"
+  }
+  return "admin"
 }
 
 function getRoleLabel(user: AdminUserRow): string {
@@ -70,15 +108,9 @@ export default function UserManagementPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [createEmail, setCreateEmail] = useState("")
   const [createPassword, setCreatePassword] = useState("")
-  const [createRole, setCreateRole] = useState<"admin" | "super_admin">("admin")
-  const [createPermissions, setCreatePermissions] = useState<Record<string, boolean>>({ ...DEFAULT_ADMIN_PERMISSIONS })
+  const [createPreset, setCreatePreset] = useState<RolePreset>("admin")
   const [isCreating, setIsCreating] = useState(false)
 
-  // Edit dialog
-  const [editUser, setEditUser] = useState<AdminUserRow | null>(null)
-  const [editRole, setEditRole] = useState<"admin" | "super_admin">("admin")
-  const [editPermissions, setEditPermissions] = useState<Record<string, boolean>>({})
-  const [isSaving, setIsSaving] = useState(false)
 
   // Delete dialog
   const [deleteUser, setDeleteUser] = useState<AdminUserRow | null>(null)
@@ -109,14 +141,15 @@ export default function UserManagementPage() {
     }
     setIsCreating(true)
     try {
+      const { role, permissions } = presetToRoleAndPermissions(createPreset)
       const res = await fetch("/api/admin/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email: createEmail.trim(),
           password: createPassword.trim(),
-          role: createRole,
-          permissions: createPermissions,
+          role,
+          permissions,
         }),
       })
       const data = await res.json()
@@ -135,35 +168,7 @@ export default function UserManagementPage() {
   const resetCreateForm = () => {
     setCreateEmail("")
     setCreatePassword("")
-    setCreateRole("admin")
-    setCreatePermissions({ ...DEFAULT_ADMIN_PERMISSIONS })
-  }
-
-  const openEdit = (user: AdminUserRow) => {
-    setEditUser(user)
-    setEditRole(user.role)
-    setEditPermissions({ ...DEFAULT_ADMIN_PERMISSIONS, ...user.permissions })
-  }
-
-  const handleSave = async () => {
-    if (!editUser) return
-    setIsSaving(true)
-    try {
-      const res = await fetch(`/api/admin/users/${editUser.user_id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role: editRole, permissions: editPermissions }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || "Failed to update user")
-      toast.success(`Updated ${editUser.email}`)
-      setEditUser(null)
-      fetchUsers()
-    } catch (err: any) {
-      toast.error(err.message)
-    } finally {
-      setIsSaving(false)
-    }
+    setCreatePreset("admin")
   }
 
   const handleDelete = async () => {
@@ -245,7 +250,7 @@ export default function UserManagementPage() {
                   <TableHead>Role</TableHead>
                   <TableHead>Permissions</TableHead>
                   <TableHead>Created</TableHead>
-                  <TableHead className="w-[120px]">Actions</TableHead>
+                  <TableHead className="w-[120px]">Access</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -279,38 +284,43 @@ export default function UserManagementPage() {
                       </TableCell>
                       <TableCell>
                         <div className="flex flex-wrap gap-1">
-                          {PERMISSION_LABELS.filter(p => user.permissions?.[p.key] === true).map(p => (
-                            <span key={p.key} className="text-[10px] px-1.5 py-0.5 rounded bg-green-50 text-green-700 border border-green-200">
-                              {p.label}
-                            </span>
-                          ))}
-                          {user.role === "super_admin" && !PERMISSION_LABELS.some(p => user.permissions?.[p.key] === false) && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200">
-                              All Access
-                            </span>
-                          )}
+                          {(() => {
+                            const hasExplicitFalse = PERMISSION_LABELS.some(p => user.permissions?.[p.key] === false)
+                            const isFullSuperAdmin = user.role === "super_admin" && !hasExplicitFalse
+                            if (isFullSuperAdmin) {
+                              return (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200">
+                                  All Access
+                                </span>
+                              )
+                            }
+                            return PERMISSION_LABELS.filter(p => {
+                              if (user.role === "super_admin") return user.permissions?.[p.key] !== false
+                              return user.permissions?.[p.key] === true
+                            }).map(p => (
+                              <span key={p.key} className="text-[10px] px-1.5 py-0.5 rounded bg-green-50 text-green-700 border border-green-200">
+                                {p.label}
+                              </span>
+                            ))
+                          })()}
                         </div>
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
                         {new Date(user.created_at).toLocaleDateString()}
                       </TableCell>
                       <TableCell>
-                        <div className="flex gap-1">
-                          <Button variant="ghost" size="icon" onClick={() => openEdit(user)} title="Edit permissions">
-                            <Edit2 className="h-4 w-4" />
+                        {!isCurrentUser && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-red-500 hover:text-red-700 hover:bg-red-50 gap-1.5"
+                            onClick={() => setDeleteUser(user)}
+                            title="Revoke access"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            <span className="text-xs">Revoke</span>
                           </Button>
-                          {!isCurrentUser && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="text-red-500 hover:text-red-700"
-                              onClick={() => setDeleteUser(user)}
-                              title="Delete user"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          )}
-                        </div>
+                        )}
                       </TableCell>
                     </TableRow>
                   )
@@ -338,27 +348,29 @@ export default function UserManagementPage() {
               <Input id="create-password" type="text" placeholder="Strong password" value={createPassword} onChange={e => setCreatePassword(e.target.value)} />
             </div>
             <div>
-              <Label htmlFor="create-role">Role</Label>
-              <select
-                id="create-role"
-                value={createRole}
-                onChange={e => setCreateRole(e.target.value as "admin" | "super_admin")}
-                className="w-full px-3 py-2 border rounded-md bg-white text-sm"
-              >
-                <option value="admin">Admin</option>
-                <option value="super_admin">Super Admin</option>
-              </select>
-            </div>
-            <div>
-              <Label className="mb-2 block">Permissions</Label>
-              <div className="grid grid-cols-2 gap-3">
-                {PERMISSION_LABELS.map(p => (
-                  <label key={p.key} className="flex items-center gap-2 text-sm cursor-pointer">
-                    <Switch
-                      checked={createPermissions[p.key] ?? false}
-                      onCheckedChange={v => setCreatePermissions(prev => ({ ...prev, [p.key]: v }))}
+              <Label className="mb-3 block">Role</Label>
+              <div className="space-y-2">
+                {ROLE_PRESETS.map(preset => (
+                  <label
+                    key={preset.value}
+                    className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                      createPreset === preset.value
+                        ? "border-[#5E366D] bg-[#5E366D]/5"
+                        : "border-gray-200 hover:border-gray-300"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="create-preset"
+                      value={preset.value}
+                      checked={createPreset === preset.value}
+                      onChange={() => setCreatePreset(preset.value)}
+                      className="mt-0.5 accent-[#5E366D]"
                     />
-                    <span>{p.label}</span>
+                    <div>
+                      <div className="text-sm font-medium">{preset.label}</div>
+                      <div className="text-xs text-muted-foreground">{preset.description}</div>
+                    </div>
                   </label>
                 ))}
               </div>
@@ -373,65 +385,19 @@ export default function UserManagementPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Edit Permissions Dialog */}
-      <Dialog open={!!editUser} onOpenChange={open => { if (!isSaving) { if (!open) setEditUser(null) } }}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Edit User</DialogTitle>
-            <DialogDescription>Update role and permissions for <strong>{editUser?.email}</strong></DialogDescription>
-          </DialogHeader>
-          {editUser && (
-            <div className="space-y-4 py-2">
-              <div>
-                <Label htmlFor="edit-role">Role</Label>
-                <select
-                  id="edit-role"
-                  value={editRole}
-                  onChange={e => setEditRole(e.target.value as "admin" | "super_admin")}
-                  className="w-full px-3 py-2 border rounded-md bg-white text-sm"
-                >
-                  <option value="admin">Admin</option>
-                  <option value="super_admin">Super Admin</option>
-                </select>
-              </div>
-              <div>
-                <Label className="mb-2 block">Permissions</Label>
-                <div className="grid grid-cols-2 gap-3">
-                  {PERMISSION_LABELS.map(p => (
-                    <label key={p.key} className="flex items-center gap-2 text-sm cursor-pointer">
-                      <Switch
-                        checked={editPermissions[p.key] ?? false}
-                        onCheckedChange={v => setEditPermissions(prev => ({ ...prev, [p.key]: v }))}
-                      />
-                      <span>{p.label}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditUser(null)} disabled={isSaving}>Cancel</Button>
-            <Button onClick={handleSave} disabled={isSaving} className="bg-[#5E366D] hover:bg-[#5E366D]/90">
-              {isSaving ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Saving...</> : "Save Changes"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Delete Confirmation Dialog */}
+      {/* Revoke Access Confirmation Dialog */}
       <Dialog open={!!deleteUser} onOpenChange={open => { if (!isDeleting && !open) setDeleteUser(null) }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete User</DialogTitle>
+            <DialogTitle>Revoke Access</DialogTitle>
             <DialogDescription>
-              Are you sure you want to permanently delete <strong>{deleteUser?.email}</strong>? This will remove them from authentication and they will no longer be able to log in. This action cannot be undone.
+              Are you sure you want to revoke access for <strong>{deleteUser?.email}</strong>? This will permanently remove them from the system and they will no longer be able to log in. This action cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteUser(null)} disabled={isDeleting}>Cancel</Button>
             <Button variant="destructive" onClick={handleDelete} disabled={isDeleting}>
-              {isDeleting ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Deleting...</> : "Delete User"}
+              {isDeleting ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Revoking...</> : "Revoke Access"}
             </Button>
           </DialogFooter>
         </DialogContent>
