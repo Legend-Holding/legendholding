@@ -30,6 +30,14 @@ const VALID_ROUTE_PREFIXES = new Set([
 
 function isValidRoute(pathname: string): boolean {
   if (pathname === '/') return true
+  // Allow direct static file requests from /public (e.g. /icon.png, /file.svg).
+  // These have no additional "/" in the pathname.
+  if (
+    pathname.lastIndexOf('/') === 0 &&
+    /\.[a-z0-9]+$/i.test(pathname)
+  ) {
+    return true
+  }
   const firstSegment = '/' + pathname.split('/')[1]
   return VALID_ROUTE_PREFIXES.has(firstSegment)
 }
