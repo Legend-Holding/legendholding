@@ -343,12 +343,10 @@ export default function NewsManagement() {
       }
 
       // Update the article
-      const { data: updatedArticle, error } = await supabase
+      const { error } = await supabase
         .from("news_articles")
         .update(articleData)
         .eq("id", editingArticle.id)
-        .select()
-        .single()
 
       if (error) throw error
 
