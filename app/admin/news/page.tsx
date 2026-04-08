@@ -131,56 +131,17 @@ export default function NewsManagement() {
     }],
   })
 
-  // Fetch articles on component mount
+  // Fetch articles via server-side API (bypasses RLS so admin sees all articles including unpublished)
   const fetchArticles = async () => {
     try {
-      // Get total count of articles
-      const { count } = await supabase
-        .from("news_articles")
-        .select("*", { count: "exact", head: true })
-
-      // Calculate total pages
-      setTotalPages(Math.ceil((count || 0) / articlesPerPage))
-
-      // Fetch articles with their images
-      const { data: articlesData, error } = await supabase
-        .from("news_articles")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .range((currentPage - 1) * articlesPerPage, currentPage * articlesPerPage - 1)
-
-      if (error) throw error
-
-      // Fetch images for each article
-      const articlesWithImages = await Promise.all(
-        (articlesData || []).map(async (article) => {
-          try {
-            const { data: imagesData, error: imagesError } = await supabase
-              .from("news_article_images")
-              .select("*")
-              .eq("article_id", article.id)
-              .order("image_order", { ascending: true })
-
-            if (imagesError) {
-              // Check if table doesn't exist (common error code: PGRST116)
-              if (imagesError.code === 'PGRST116' || imagesError.message?.includes('does not exist')) {
-                console.warn("news_article_images table not found. Please run the database migration.")
-                return { ...article, images: [] }
-              }
-              console.error("Error fetching images for article:", article.id, imagesError)
-              return { ...article, images: [] }
-            }
-
-            console.log(`Article ${article.id} (${article.title}) has ${imagesData?.length || 0} images:`, imagesData)
-            return { ...article, images: imagesData || [] }
-          } catch (error) {
-            console.warn("Failed to fetch images for article (table may not exist yet):", article.id)
-            return { ...article, images: [] }
-          }
-        })
-      )
-
-      setArticles(articlesWithImages)
+      const res = await fetch(`/api/admin/news?page=${currentPage}&limit=${articlesPerPage}`)
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}))
+        throw new Error(errBody.error || "Failed to fetch articles")
+      }
+      const data = await res.json()
+      setArticles(data.articles || [])
+      setTotalPages(Math.ceil((data.total || 0) / articlesPerPage))
     } catch (error) {
       console.error("Error fetching articles:", error)
       toast.error("Failed to load articles")
@@ -299,38 +260,25 @@ export default function NewsManagement() {
     }
   }
 
-  // Update article
+  // Update article via server-side API (bypasses RLS so publish/unpublish works)
   const handleUpdate = async () => {
     if (!editingArticle) return
 
     try {
-      // If this article is being set as featured, uncheck all other articles first
-      if (formData.is_featured) {
-        const { error: uncheckError } = await supabase
-          .from("news_articles")
-          .update({ is_featured: false })
-          .neq("id", editingArticle.id)
-
-        if (uncheckError) throw uncheckError
-      }
-
-      // Convert minutes to read_time format
       const read_time = `${formData.read_time_minutes} ${formData.read_time_minutes === 1 ? 'Minute' : 'Minutes'}`
-      
-      // Keep existing slug (article-1, article-2) or assign next number if missing (legacy row)
+
       let slug = editingArticle.slug?.trim() || null
       if (!slug) {
         const { data: existingSlugs } = await supabase.from("news_articles").select("slug")
         slug = getNextArticleSlug((existingSlugs || []).map((r) => r.slug))
       }
-      
-      // Prepare article data (excluding images)
+
       const articleData = {
         title: formData.title,
         slug,
         excerpt: formData.excerpt,
         content: formData.content,
-        image_url: formData.images[0]?.image_url || "", // Keep first image for backward compatibility
+        image_url: formData.images[0]?.image_url || "",
         category: formData.category,
         author: formData.author,
         publication_date: formData.publication_date,
@@ -342,15 +290,18 @@ export default function NewsManagement() {
         read_time
       }
 
-      // Update the article
-      const { error } = await supabase
-        .from("news_articles")
-        .update(articleData)
-        .eq("id", editingArticle.id)
+      const res = await fetch(`/api/admin/news/${editingArticle.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(articleData),
+      })
 
-      if (error) throw error
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}))
+        throw new Error(errBody.error || "Failed to update article")
+      }
 
-      // Delete existing images for this article
+      // Delete existing images then re-insert
       const { error: deleteError } = await supabase
         .from("news_article_images")
         .delete()
@@ -358,10 +309,9 @@ export default function NewsManagement() {
 
       if (deleteError) throw deleteError
 
-      // Insert updated images
       if (formData.images.length > 0) {
         const imageData = formData.images
-          .filter(image => image.image_url.trim() !== "") // Only save images with URLs
+          .filter(image => image.image_url.trim() !== "")
           .map((image, index) => ({
             article_id: editingArticle.id,
             image_url: image.image_url,
@@ -371,47 +321,39 @@ export default function NewsManagement() {
             caption: image.caption || null
           }))
 
-        console.log("Saving updated images:", imageData)
-        
         if (imageData.length > 0) {
           const { error: imageError } = await supabase
             .from("news_article_images")
             .insert(imageData)
 
-          if (imageError) {
-            console.error("Error saving updated images:", imageError)
-            throw imageError
-          }
-          console.log("Updated images saved successfully")
+          if (imageError) throw imageError
         }
       }
 
-      // Refresh the articles list to get the complete data with images
       await fetchArticles()
       setEditingArticle(null)
       toast.success("Article updated successfully")
     } catch (error) {
-      console.error("Error updating articles:", error)
-      toast.error("Failed to update article")
+      console.error("Error updating article:", error)
+      toast.error(error instanceof Error ? error.message : "Failed to update article")
     }
   }
 
-  // Delete article
+  // Delete article via server-side API
   const handleDelete = async (id: string) => {
     try {
-      const { error } = await supabase
-        .from("news_articles")
-        .delete()
-        .eq("id", id)
-
-      if (error) throw error
+      const res = await fetch(`/api/admin/news/${id}`, { method: "DELETE" })
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}))
+        throw new Error(errBody.error || "Failed to delete article")
+      }
 
       setArticles(articles.filter(article => article.id !== id))
       setDeleteConfirmId(null)
       toast.success("Article deleted successfully")
     } catch (error) {
       console.error("Error deleting article:", error)
-      toast.error("Failed to delete article")
+      toast.error(error instanceof Error ? error.message : "Failed to delete article")
     }
   }
 
