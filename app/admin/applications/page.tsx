@@ -130,14 +130,15 @@ export default function ApplicationsPage() {
         userId = userRoleCache.current.userId
         role = userRoleCache.current.role
       } else {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) { toast.error('User not authenticated'); setLoading(false); setFiltering(false); return }
-        userId = user.id
-        const { data: roleData, error: roleError } = await supabase
-          .from('user_roles').select('role').eq('user_id', user.id).single()
-        if (roleError || !roleData) { toast.error('Unable to determine user role'); setLoading(false); setFiltering(false); return }
-        role = roleData.role
-        userRoleCache.current = { userId: user.id, role: role }
+        if (!userRole?.user_id || !userRole?.role) {
+          toast.error('User not authenticated')
+          setLoading(false)
+          setFiltering(false)
+          return
+        }
+        userId = userRole.user_id
+        role = userRole.role
+        userRoleCache.current = { userId: userRole.user_id, role: userRole.role }
       }
 
       // --- Job IDs for filtering (cached per filter value) ---
@@ -327,28 +328,23 @@ export default function ApplicationsPage() {
 
   const fetchJobs = async () => {
     try {
-      // Get current user
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
+      // Get current user from admin permission context
+      const userId = userRole?.user_id
+      if (!userId) return
 
       // Use cached role if available, otherwise fetch
-      let userRole: string | null = null
-      if (userRoleCache.current && userRoleCache.current.userId === user.id) {
-        userRole = userRoleCache.current.role
+      let currentRole: string | null = null
+      if (userRoleCache.current && userRoleCache.current.userId === userId) {
+        currentRole = userRoleCache.current.role
       } else {
-        const { data: roleData } = await supabase
-          .from('user_roles')
-          .select('role')
-          .eq('user_id', user.id)
-          .single()
-        userRole = roleData?.role || null
-        if (roleData) {
-          userRoleCache.current = { userId: user.id, role: roleData.role }
+        currentRole = userRole?.role || null
+        if (currentRole) {
+          userRoleCache.current = { userId, role: currentRole }
         }
       }
 
       // Fetch both active and inactive jobs (for dropdown)
-      if (userRole === 'super_admin') {
+      if (currentRole === 'super_admin') {
         const { data: jobsData, error: jobsError } = await supabase
           .from('jobs')
           .select('id, title, department, status')
@@ -363,13 +359,13 @@ export default function ApplicationsPage() {
         const { data: createdJobs } = await supabase
           .from('jobs')
           .select('id, title, department, status')
-          .eq('created_by', user.id)
+          .eq('created_by', userId)
           .order('title', { ascending: true })
         
         const { data: assignedJobs } = await supabase
           .from('jobs')
           .select('id, title, department, status')
-          .eq('assigned_to', user.id)
+          .eq('assigned_to', userId)
           .order('title', { ascending: true })
         
         const allJobs = [...(createdJobs || []), ...(assignedJobs || [])]
@@ -838,13 +834,7 @@ export default function ApplicationsPage() {
   const handleSignOut = async () => {
     try {
       clearPermissionsCache()
-      const { error } = await supabase.auth.signOut()
-      if (error) {
-        console.error('Sign out error:', error)
-      }
-      
-      // Clear any local storage
-      localStorage.removeItem('supabase.auth.token')
+      await fetch('/api/admin/auth/logout', { method: 'POST' })
       
       // Force redirect to login page
       window.location.href = '/admin/login'

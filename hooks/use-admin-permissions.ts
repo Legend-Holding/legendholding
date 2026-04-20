@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
 
 export interface UserRole {
   id: string
@@ -91,7 +90,6 @@ function buildFallbackRole(user: { id: string; email?: string | null }): UserRol
 export function useAdminPermissions(): AdminPermissions {
   const [userRole, setUserRole] = useState<UserRole | null>(_cachedRole)
   const [isLoading, setIsLoading] = useState(_cachedRole === null)
-  const supabase = createClientComponentClient()
 
   useEffect(() => {
     // If we already have a cached role, use it immediately — no loading state
@@ -120,47 +118,27 @@ export function useAdminPermissions(): AdminPermissions {
 
   const fetchUserRole = async () => {
     try {
-      const { data, error } = await supabase.auth.getUser()
-      if (error || !data.user) { _cachedRole = null; return }
-      const user = data.user
-
-      const fallbackRole = buildFallbackRole(user)
-
-      try {
-        const { data: roleData, error: roleError } = await supabase
-          .from('user_roles')
-          .select('*')
-          .eq('user_id', user.id)
-          .single()
-
-        if (roleError) {
-          try {
-            await supabase.rpc('add_missing_user_roles')
-            const { data: retryData, error: retryErr } = await supabase
-              .from('user_roles').select('*').eq('user_id', user.id).single()
-            _cachedRole = (retryData && !retryErr)
-              ? applyBusinessCardsOnlyOverride(retryData, user.email)
-              : fallbackRole
-          } catch {
-            try {
-              const { data: insertData, error: insertErr } = await supabase
-                .from('user_roles').insert([fallbackRole]).select().single()
-              _cachedRole = insertErr ? fallbackRole : applyBusinessCardsOnlyOverride(insertData, user.email)
-            } catch { _cachedRole = fallbackRole }
-          }
-        } else if (roleData) {
-          _cachedRole = applyBusinessCardsOnlyOverride(roleData, user.email)
-        } else {
-          _cachedRole = fallbackRole
-        }
-      } catch {
-        _cachedRole = fallbackRole
+      const res = await fetch('/api/admin/auth/me', {
+        method: 'GET',
+        cache: 'no-store',
+      })
+      if (!res.ok) {
+        _cachedRole = null
+        return
       }
+
+      const data = await res.json()
+      if (!data?.user?.id) {
+        _cachedRole = null
+        return
+      }
+
+      const fallbackRole = buildFallbackRole(data.user)
+      _cachedRole = data.role
+        ? applyBusinessCardsOnlyOverride(data.role, data.user.email)
+        : fallbackRole
     } catch {
-      try {
-        const { data: { user } } = await supabase.auth.getUser()
-        _cachedRole = user ? buildFallbackRole(user) : null
-      } catch { _cachedRole = null }
+      _cachedRole = null
     }
   }
 

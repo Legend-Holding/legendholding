@@ -1,31 +1,15 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { Resend } from 'resend';
 import { getCompanyEmail, getBusinessHeadEmail } from '@/lib/company-email-map';
+import { query } from '@/lib/db';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 export async function GET(request: Request) {
   try {
-    if (!process.env.SUPABASE_SERVICE_ROLE_KEY || !process.env.NEXT_PUBLIC_SUPABASE_URL) {
-      return NextResponse.json({ error: 'Server configuration error' }, { status: 500 });
-    }
-
     if (!process.env.RESEND_API_KEY) {
       return NextResponse.json({ error: 'Email service not configured' }, { status: 500 });
     }
-
-    // Create Supabase client
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_ROLE_KEY,
-      {
-        auth: {
-          autoRefreshToken: false,
-          persistSession: false
-        }
-      }
-    );
 
     const now = new Date();
     const fortyEightHoursAgo = new Date(now.getTime() - 48 * 60 * 60 * 1000);
@@ -39,47 +23,47 @@ export async function GET(request: Request) {
     // 4. last_escalation_sent_at (business head email) was 6+ days ago and still not resolved → escalate to complaints@legendholding.com
     
     // Get complaints with status 'sent' that are older than 48 hours
-    const { data: sentComplaints, error: sentError } = await supabase
-      .from('customer_care_complaints')
-      .select('*')
-      .eq('status', 'sent')
-      .lt('created_at', fortyEightHoursAgo.toISOString())
-      .eq('resolved', false);
+    const sentComplaintsResult = await query(
+      `SELECT * FROM customer_care_complaints
+       WHERE status = $1
+         AND created_at < $2
+         AND resolved = $3`,
+      ['sent', fortyEightHoursAgo.toISOString(), false]
+    );
+    const sentComplaints = sentComplaintsResult.rows;
 
     // Get complaints with status 'reviewed' that were reviewed more than 48 hours ago
-    const { data: reviewedComplaints, error: reviewedError } = await supabase
-      .from('customer_care_complaints')
-      .select('*')
-      .eq('status', 'reviewed')
-      .not('reviewed_at', 'is', null)
-      .lt('reviewed_at', fortyEightHoursAgo.toISOString())
-      .eq('resolved', false);
+    const reviewedComplaintsResult = await query(
+      `SELECT * FROM customer_care_complaints
+       WHERE status = $1
+         AND reviewed_at IS NOT NULL
+         AND reviewed_at < $2
+         AND resolved = $3`,
+      ['reviewed', fortyEightHoursAgo.toISOString(), false]
+    );
+    const reviewedComplaints = reviewedComplaintsResult.rows;
 
     // Get complaints that are 3+ days old, not resolved, and not yet escalated to business head
-    const { data: escalatedComplaints, error: escalatedError } = await supabase
-      .from('customer_care_complaints')
-      .select('*')
-      .lt('created_at', threeDaysAgo.toISOString())
-      .eq('resolved', false)
-      .is('last_escalation_sent_at', null);
+    const escalatedComplaintsResult = await query(
+      `SELECT * FROM customer_care_complaints
+       WHERE created_at < $1
+         AND resolved = $2
+         AND last_escalation_sent_at IS NULL`,
+      [threeDaysAgo.toISOString(), false]
+    );
+    const escalatedComplaints = escalatedComplaintsResult.rows;
 
     // Get complaints where business head was emailed 6+ days ago and still not resolved (escalate to holding)
     const sixDaysAgo = new Date(now.getTime() - sixDaysInMs);
-    const { data: holdingEscalationComplaints, error: holdingError } = await supabase
-      .from('customer_care_complaints')
-      .select('*')
-      .not('last_escalation_sent_at', 'is', null)
-      .lt('last_escalation_sent_at', sixDaysAgo.toISOString())
-      .eq('resolved', false)
-      .is('holding_escalation_sent_at', null);
-
-    if (sentError || reviewedError || escalatedError || holdingError) {
-      console.error('Error fetching complaints:', sentError || reviewedError || escalatedError || holdingError);
-      return NextResponse.json(
-        { error: 'Failed to fetch complaints' },
-        { status: 500 }
-      );
-    }
+    const holdingEscalationComplaintsResult = await query(
+      `SELECT * FROM customer_care_complaints
+       WHERE last_escalation_sent_at IS NOT NULL
+         AND last_escalation_sent_at < $1
+         AND resolved = $2
+         AND holding_escalation_sent_at IS NULL`,
+      [sixDaysAgo.toISOString(), false]
+    );
+    const holdingEscalationComplaints = holdingEscalationComplaintsResult.rows;
 
     // Combine reminder lists (48-hour reminders)
     const reminderComplaints = [...(sentComplaints || []), ...(reviewedComplaints || [])];
@@ -321,10 +305,10 @@ export async function GET(request: Request) {
           remindersSent.push(complaint.id);
           console.log(`Reminder sent for complaint ${complaint.id} to ${companyEmail}`);
 
-          await supabase
-            .from('customer_care_complaints')
-            .update({ last_reminder_sent_at: now.toISOString() })
-            .eq('id', complaint.id);
+          await query(
+            'UPDATE customer_care_complaints SET last_reminder_sent_at = $1 WHERE id = $2',
+            [now.toISOString(), complaint.id]
+          );
         }
       } catch (error: any) {
         console.error(`Error processing reminder for complaint ${complaint.id}:`, error);
@@ -440,10 +424,10 @@ export async function GET(request: Request) {
           console.log(`Escalation sent for complaint ${complaint.id} to business head ${businessHeadEmail}`);
           
           // Update last_escalation_sent_at timestamp
-          await supabase
-            .from('customer_care_complaints')
-            .update({ last_escalation_sent_at: now.toISOString() })
-            .eq('id', complaint.id);
+          await query(
+            'UPDATE customer_care_complaints SET last_escalation_sent_at = $1 WHERE id = $2',
+            [now.toISOString(), complaint.id]
+          );
         }
       } catch (error: any) {
         console.error(`Error processing escalation for complaint ${complaint.id}:`, error);
@@ -539,10 +523,10 @@ export async function GET(request: Request) {
         } else {
           holdingEscalationsSent.push(complaint.id);
           console.log(`Holding escalation sent for complaint ${complaint.id} to ${holdingInboxEmail}`);
-          await supabase
-            .from('customer_care_complaints')
-            .update({ holding_escalation_sent_at: now.toISOString() })
-            .eq('id', complaint.id);
+          await query(
+            'UPDATE customer_care_complaints SET holding_escalation_sent_at = $1 WHERE id = $2',
+            [now.toISOString(), complaint.id]
+          );
         }
       } catch (error: any) {
         console.error(`Error processing holding escalation for complaint ${complaint.id}:`, error);

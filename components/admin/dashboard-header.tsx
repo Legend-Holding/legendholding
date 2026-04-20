@@ -11,18 +11,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { useAdminPermissions, clearPermissionsCache } from "@/hooks/use-admin-permissions"
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
 import { useRouter } from "next/navigation"
 
 export function DashboardHeader() {
   const { userRole, roleLabel } = useAdminPermissions()
-  const supabase = createClientComponentClient()
   const router = useRouter()
 
   const handleSignOut = async () => {
     try {
       clearPermissionsCache()
-      await supabase.auth.signOut()
+      await fetch('/api/admin/auth/logout', { method: 'POST' })
       router.push("/admin/login")
       router.refresh()
     } catch (error) {

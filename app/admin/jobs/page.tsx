@@ -127,12 +127,13 @@ export default function JobsManagement() {
       setLoading(true)
       
       // Get current user and role
-      const { data: { user } } = await supabase.auth.getUser()
-      const { data: roleData } = await supabase
-        .from('user_roles')
-        .select('role')
-        .eq('user_id', user?.id)
-        .single()
+      const userId = userRole?.user_id
+      const roleData = userRole?.role ? { role: userRole.role } : null
+      if (!userId || !roleData?.role) {
+        toast.error('Unable to determine current admin session')
+        setLoading(false)
+        return
+      }
       
       // The RLS policies will automatically filter jobs based on user role
       // Super admins will see all jobs, regular admins will see only their own
@@ -148,13 +149,13 @@ export default function JobsManagement() {
         const { data: createdJobs, error: createdError } = await supabase
           .from('jobs')
           .select('*')
-          .eq('created_by', user?.id)
+          .eq('created_by', userId)
           .order('created_at', { ascending: false })
         
         const { data: assignedJobs, error: assignedError } = await supabase
           .from('jobs')
           .select('*')
-          .eq('assigned_to', user?.id)
+          .eq('assigned_to', userId)
           .order('created_at', { ascending: false })
         
         if (createdError) throw createdError
@@ -316,8 +317,8 @@ export default function JobsManagement() {
       setIsSubmittingJob(true)
 
       // Get current user to set as created_by
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) {
+      const userId = userRole?.user_id
+      if (!userId) {
         toast.error("You must be logged in to create a job")
         setIsSubmittingJob(false)
         return
@@ -349,7 +350,7 @@ export default function JobsManagement() {
         requirements: requirements,
         responsibilities: responsibilities,
         company: newJob.company ?? '',
-        created_by: user.id
+        created_by: userId
       }
 
       const { data, error } = await supabase
@@ -492,10 +493,7 @@ export default function JobsManagement() {
   const handleSignOut = async () => {
     try {
       clearPermissionsCache()
-      const { error } = await supabase.auth.signOut()
-      
-      // Clear any local storage
-      localStorage.removeItem('supabase.auth.token')
+      await fetch('/api/admin/auth/logout', { method: 'POST' })
       
       // Force redirect to login page
       window.location.href = '/admin/login'

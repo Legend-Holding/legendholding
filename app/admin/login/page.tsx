@@ -2,14 +2,11 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
-import { AuthError } from '@supabase/supabase-js'
 import Image from 'next/image'
 import { Lock, Mail, Loader2 } from 'lucide-react'
 
 export default function AdminLogin() {
   const router = useRouter()
-  const supabase = createClientComponentClient()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -23,31 +20,20 @@ export default function AdminLogin() {
     let didSucceed = false
 
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
+      const res = await fetch('/api/admin/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
       })
 
-      if (error) {
-        if (error instanceof AuthError) {
-          // Handle specific auth errors
-          switch (error.message) {
-            case 'Invalid login credentials':
-              setError('Invalid email or password')
-              break
-            case 'Email not confirmed':
-              setError('Please verify your email address')
-              break
-            default:
-              setError(error.message)
-          }
-        } else {
-          throw error
-        }
+      const data = await res.json()
+
+      if (!res.ok) {
+        setError(data?.error || 'Invalid email or password')
         return
       }
 
-      if (data.user) {
+      if (data?.user) {
         didSucceed = true
         setIsRedirecting(true)
         // Keep loading visible until we navigate away

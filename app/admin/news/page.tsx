@@ -98,8 +98,7 @@ export default function NewsManagement() {
 
   const handleSignOut = async () => {
     try {
-      const { error } = await supabase.auth.signOut()
-      if (error) throw error
+      await fetch('/api/admin/auth/logout', { method: 'POST' })
       router.refresh()
       router.push("/admin/login")
     } catch (error) {

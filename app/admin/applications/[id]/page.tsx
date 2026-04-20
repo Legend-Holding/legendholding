@@ -435,7 +435,7 @@ export default function ApplicationDetails() {
 
 
   const handleSignOut = async () => {
-    await supabase.auth.signOut()
+    await fetch('/api/admin/auth/logout', { method: 'POST' })
     router.refresh()
     router.push("/admin/login")
   }

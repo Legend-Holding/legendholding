@@ -50,6 +50,39 @@ pnpm dev
 
 4. Open [http://localhost:3000](http://localhost:3000) in your browser.
 
+### Staging Environment (Non-Production)
+
+Staging uses a separate env file (`.env.staging`) and connects directly to a self-hosted Postgres instead of Supabase.
+
+1. Create `.env.staging` from the template:
+
+```bash
+cp .env.staging.example .env.staging
+```
+
+2. Fill in staging-only values (do not reuse production secrets). Required Postgres vars:
+
+- `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_SSL`
+- `APP_ENV=staging`, `NEXT_PUBLIC_APP_ENV=staging`
+
+If the password contains special characters (`$ ! # & @ ^`), wrap it in double quotes in the file.
+
+3. Verify the DB connection:
+
+```bash
+npm run db:test:staging
+```
+
+4. Run staging scripts:
+
+```bash
+npm run dev:staging
+npm run build:staging
+npm run start:staging
+```
+
+The Postgres pool is exposed via `lib/db.ts` (`query`, `withTransaction`, `checkDbConnection`).
+
 ### Build
 
 To create a production build:

@@ -190,8 +190,7 @@ export default function UserManagementPage() {
 
   const handleSignOut = async () => {
     try {
-      await supabase.auth.signOut()
-      localStorage.removeItem("supabase.auth.token")
+      await fetch('/api/admin/auth/logout', { method: 'POST' })
       window.location.href = "/admin/login"
     } catch {
       window.location.href = "/admin/login"

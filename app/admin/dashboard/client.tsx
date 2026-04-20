@@ -83,17 +83,7 @@ export function DashboardClient() {
   const handleSignOut = async () => {
     try {
       clearPermissionsCache()
-      const { error } = await supabase.auth.signOut()
-      if (error) {
-        console.error('Sign out error:', error)
-        throw error
-      }
-      console.log('Sign out successful, redirecting to login')
-      
-      // Clear any local storage
-      localStorage.removeItem('supabase.auth.token')
-      
-      // Force redirect to login page
+      await fetch('/api/admin/auth/logout', { method: 'POST' })
       window.location.href = '/admin/login'
     } catch (error) {
       console.error("Error signing out:", error)
