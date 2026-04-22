@@ -185,7 +185,7 @@ export function JobsTable({ jobs = [], loading, onDelete, onUpdate, onAssign, is
           </TableHeader>
           <TableBody>
             {paginatedJobs.map((job, index) => (
-              <TableRow key={job?.id || index} className="hover:bg-gray-50">
+              <TableRow key={`${job?.id || 'job'}-${startIndex + index}`} className="hover:bg-gray-50">
                 <TableCell>{startIndex + index + 1}</TableCell>
                 <TableCell className="font-medium">{job?.title || 'N/A'}</TableCell>
                 <TableCell>{job?.company || 'N/A'}</TableCell>

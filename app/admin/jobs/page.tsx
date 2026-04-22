@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
 import { useRouter } from "next/navigation"
 import { AdminDashboardLayout } from "@/components/admin/dashboard-layout"
 import { JobsTable } from "@/components/admin/jobs-table"
@@ -66,7 +65,6 @@ const convertBulletPointsToText = (bulletPoints: string[]): string => {
 
 export default function JobsManagement() {
   const router = useRouter()
-  const supabase = createClientComponentClient()
   const { userRole, isLoading: permissionsLoading, hasPermission, isSuperAdmin } = useAdminPermissions()
   const [jobs, setJobs] = useState<Job[]>([])
   const [loading, setLoading] = useState(true)
@@ -108,13 +106,9 @@ export default function JobsManagement() {
 
   const fetchAdminUsers = async () => {
     try {
-      const { data, error } = await supabase
-        .from('user_roles')
-        .select('user_id, email, role')
-        .in('role', ['admin', 'super_admin'])
-        .order('email')
-      
-      if (error) throw error
+      const res = await fetch('/api/admin/jobs/admin-users', { cache: 'no-store' })
+      const data = await res.json().catch(() => [])
+      if (!res.ok) throw new Error(data?.error || 'Failed to fetch admin users')
       const filtered = (data || []).filter(u => !EXCLUDED_FROM_ASSIGNMENT.includes(u.email))
       setAdminUsers(filtered)
     } catch (error) {
@@ -125,161 +119,10 @@ export default function JobsManagement() {
   const fetchJobs = async () => {
     try {
       setLoading(true)
-      
-      // Get current user and role
-      const userId = userRole?.user_id
-      const roleData = userRole?.role ? { role: userRole.role } : null
-      if (!userId || !roleData?.role) {
-        toast.error('Unable to determine current admin session')
-        setLoading(false)
-        return
-      }
-      
-      // The RLS policies will automatically filter jobs based on user role
-      // Super admins will see all jobs, regular admins will see only their own
-      let query = supabase
-        .from('jobs')
-        .select('*')
-        .order('created_at', { ascending: false })
-      
-      // WORKAROUND: Explicitly filter jobs based on user role since RLS is not working
-      if (roleData?.role === 'admin') {
-        // Regular admins can see jobs they created OR are assigned to
-        // Need to make two queries and combine results
-        const { data: createdJobs, error: createdError } = await supabase
-          .from('jobs')
-          .select('*')
-          .eq('created_by', userId)
-          .order('created_at', { ascending: false })
-        
-        const { data: assignedJobs, error: assignedError } = await supabase
-          .from('jobs')
-          .select('*')
-          .eq('assigned_to', userId)
-          .order('created_at', { ascending: false })
-        
-        if (createdError) throw createdError
-        if (assignedError) throw assignedError
-        
-        // Combine and deduplicate
-        const allJobs = [...(createdJobs || []), ...(assignedJobs || [])]
-        const uniqueJobs = allJobs.filter((job, index, self) =>
-          index === self.findIndex((j) => j.id === job.id)
-        )
-        
-        // Fetch user info for each job
-        const jobsWithUsers = await Promise.all(
-          uniqueJobs.map(async (job) => {
-            let jobWithUsers = { ...job }
-            
-            if (job.created_by) {
-              try {
-                const { data: userRoleData } = await supabase
-                  .from('user_roles')
-                  .select('email, role')
-                  .eq('user_id', job.created_by)
-                  .single()
-                
-                if (userRoleData) {
-                  jobWithUsers.created_by_user = userRoleData
-                } else {
-                  jobWithUsers.created_by_user = {
-                    email: `User ${job.created_by.substring(0, 8)}...`,
-                    role: 'admin'
-                  }
-                }
-              } catch (error) {
-                jobWithUsers.created_by_user = {
-                  email: `User ${job.created_by.substring(0, 8)}...`,
-                  role: 'admin'
-                }
-              }
-            }
-            
-            if (job.assigned_to) {
-              try {
-                const { data: assignedUserData } = await supabase
-                  .from('user_roles')
-                  .select('email, role')
-                  .eq('user_id', job.assigned_to)
-                  .single()
-                
-                if (assignedUserData) {
-                  jobWithUsers.assigned_to_user = assignedUserData
-                }
-              } catch (error) {
-                // Silently handle
-              }
-            }
-            
-            return jobWithUsers
-          })
-        )
-        
-        // Sort by created_at descending
-        jobsWithUsers.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-        setJobs(jobsWithUsers)
-        setLoading(false)
-        return
-      }
-      // Super admins see all jobs (no additional filter needed)
-      
-      const { data: jobsData, error } = await query
-
-      if (error) throw error
-      
-      // Fetch user information for each job
-      const jobsWithUsers = await Promise.all(
-        (jobsData || []).map(async (job) => {
-          let jobWithUsers = { ...job }
-          
-          // Fetch created_by user info
-          if (job.created_by) {
-            try {
-              const { data: userRoleData } = await supabase
-                .from('user_roles')
-                .select('email, role')
-                .eq('user_id', job.created_by)
-                .single()
-              
-              if (userRoleData) {
-                jobWithUsers.created_by_user = userRoleData
-              } else {
-                jobWithUsers.created_by_user = {
-                  email: `User ${job.created_by.substring(0, 8)}...`,
-                  role: 'admin'
-                }
-              }
-            } catch (error) {
-              jobWithUsers.created_by_user = {
-                email: `User ${job.created_by.substring(0, 8)}...`,
-                role: 'admin'
-              }
-            }
-          }
-          
-          // Fetch assigned_to user info
-          if (job.assigned_to) {
-            try {
-              const { data: assignedUserData } = await supabase
-                .from('user_roles')
-                .select('email, role')
-                .eq('user_id', job.assigned_to)
-                .single()
-              
-              if (assignedUserData) {
-                jobWithUsers.assigned_to_user = assignedUserData
-              }
-            } catch (error) {
-              // Silently handle - assigned_to_user will be undefined
-            }
-          }
-          
-          return jobWithUsers
-        })
-      )
-      
-      setJobs(jobsWithUsers)
+      const res = await fetch('/api/admin/jobs', { cache: 'no-store' })
+      const data = await res.json().catch(() => [])
+      if (!res.ok) throw new Error(data?.error || 'Failed to fetch jobs')
+      setJobs(Array.isArray(data) ? data : [])
     } catch (error) {
       console.error('Error fetching jobs:', error)
       console.error('Error details:', JSON.stringify(error, null, 2))
@@ -353,16 +196,13 @@ export default function JobsManagement() {
         created_by: userId
       }
 
-      const { data, error } = await supabase
-        .from('jobs')
-        .insert([jobData])
-        .select()
-
-
-
-      if (error) {
-        throw error
-      }
+      const res = await fetch('/api/admin/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(jobData),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error || 'Failed to post job')
 
       toast.success("Job posted successfully")
       setIsAddingJob(false)
@@ -411,14 +251,13 @@ export default function JobsManagement() {
         }
       })
 
-      const { error } = await supabase
-        .from('jobs')
-        .update(updateData)
-        .eq('id', id)
-
-      if (error) {
-        throw error
-      }
+      const res = await fetch(`/api/admin/jobs/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updateData),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body?.error || 'Failed to update job')
 
       setJobs(prev =>
         prev.map(job =>
@@ -434,12 +273,9 @@ export default function JobsManagement() {
 
   const handleDeleteJob = async (id: string) => {
     try {
-      const { error } = await supabase
-        .from('jobs')
-        .delete()
-        .eq('id', id)
-
-      if (error) throw error
+      const res = await fetch(`/api/admin/jobs/${id}`, { method: 'DELETE' })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body?.error || 'Failed to delete job')
 
       setJobs(prev => prev.filter(job => job.id !== id))
       toast.success("Job deleted successfully")
@@ -451,12 +287,13 @@ export default function JobsManagement() {
 
   const handleAssignJob = async (jobId: string, adminId: string | null) => {
     try {
-      const { error } = await supabase
-        .from('jobs')
-        .update({ assigned_to: adminId })
-        .eq('id', jobId)
-
-      if (error) throw error
+      const res = await fetch(`/api/admin/jobs/${jobId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assigned_to: adminId }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body?.error || 'Failed to assign job')
 
       // Update local state with assigned user info
       if (adminId) {

@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
 import { useRouter } from "next/navigation"
 import { AdminDashboardLayout } from "@/components/admin/dashboard-layout"
 import { SubmissionsTable } from "@/components/admin/submission-table"
@@ -23,6 +22,16 @@ interface ContactSubmission {
   status?: string
 }
 
+function dedupeSubmissionsById(items: ContactSubmission[]): ContactSubmission[] {
+  const seen = new Set<string>()
+  return items.filter((item) => {
+    if (!item?.id) return true
+    if (seen.has(item.id)) return false
+    seen.add(item.id)
+    return true
+  })
+}
+
 function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
   return (
     <div className="p-4 bg-red-50 rounded-lg">
@@ -37,7 +46,6 @@ function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
 
 export default function ContactManagement() {
   const router = useRouter()
-  const supabase = createClientComponentClient()
   const [submissions, setSubmissions] = useState<ContactSubmission[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -49,19 +57,10 @@ export default function ContactManagement() {
     try {
       setLoading(true)
       
-      // Fetch submissions with error handling
-      const { data: submissionsData, error: submissionsError } = await supabase
-        .from("contact_submissions")
-        .select("*")
-        .order("created_at", { ascending: false })
-
-      if (submissionsError) {
-        console.error("Error fetching submissions:", submissionsError)
-        toast.error("Failed to fetch submissions")
-        setSubmissions([])
-      } else {
-        setSubmissions(submissionsData || [])
-      }
+      const res = await fetch('/api/admin/submissions', { cache: 'no-store' })
+      const data = await res.json().catch(() => [])
+      if (!res.ok) throw new Error(data?.error || 'Failed to fetch submissions')
+      setSubmissions(Array.isArray(data) ? dedupeSubmissionsById(data) : [])
 
     } catch (error) {
       console.error("Error in fetchData:", error)
@@ -75,12 +74,9 @@ export default function ContactManagement() {
   const handleDeleteSubmission = async (id: string) => {
     try {
       setLoading(true)
-      const { error } = await supabase
-        .from("contact_submissions")
-        .delete()
-        .eq('id', id)
-
-      if (error) throw error
+      const res = await fetch(`/api/admin/submissions/${id}`, { method: 'DELETE' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error || 'Failed to delete submission')
 
       setSubmissions(prev => prev.filter(submission => submission.id !== id))
       toast.success("Submission deleted successfully")
@@ -95,12 +91,13 @@ export default function ContactManagement() {
   const handleUpdateSubmission = async (id: string, data: Partial<ContactSubmission>) => {
     try {
       setLoading(true)
-      const { error } = await supabase
-        .from("contact_submissions")
-        .update(data)
-        .eq('id', id)
-
-      if (error) throw error
+      const res = await fetch(`/api/admin/submissions/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body?.error || 'Failed to update submission')
 
       setSubmissions(prev => 
         prev.map(submission => 

@@ -119,193 +119,27 @@ export default function ApplicationsPage() {
   }, [jobFilter, statusFilter])
 
   const fetchApplications = async (page: number = 1) => {
-    const currentFetchId = ++fetchIdRef.current
-    const offset = (page - 1) * PAGE_SIZE
-
     try {
-      // --- Auth + role (cached after first call) ---
-      let userId: string
-      let role: string
-      if (userRoleCache.current) {
-        userId = userRoleCache.current.userId
-        role = userRoleCache.current.role
-      } else {
-        if (!userRole?.user_id || !userRole?.role) {
-          toast.error('User not authenticated')
-          setLoading(false)
-          setFiltering(false)
-          return
-        }
-        userId = userRole.user_id
-        role = userRole.role
-        userRoleCache.current = { userId: userRole.user_id, role: userRole.role }
-      }
+      const params = new URLSearchParams({
+        page: String(page),
+        pageSize: String(PAGE_SIZE),
+        status: statusFilter,
+        job: jobFilter,
+      })
+      const res = await fetch(`/api/admin/applications?${params.toString()}`, { cache: 'no-store' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error || 'Failed to load applications')
 
-      // --- Job IDs for filtering (cached per filter value) ---
-      const isSpecificJob = jobFilter !== 'active' && jobFilter !== 'inactive'
-      let userJobIds: string[] | null = null
-
-      if (isSpecificJob) {
-        userJobIds = [jobFilter]
-      } else if (jobIdsCache.current?.filter === jobFilter) {
-        userJobIds = jobIdsCache.current.ids
-      } else if (role === 'super_admin') {
-        const { data: jobsByStatus } = await supabase.from('jobs').select('id').eq('status', jobFilter)
-        userJobIds = jobsByStatus?.map(j => j.id) || []
-        jobIdsCache.current = { filter: jobFilter, ids: userJobIds }
-      } else {
-        const [{ data: created }, { data: assigned }] = await Promise.all([
-          supabase.from('jobs').select('id').eq('created_by', userId).eq('status', jobFilter),
-          supabase.from('jobs').select('id').eq('assigned_to', userId).eq('status', jobFilter)
-        ])
-        userJobIds = [...new Set([...(created?.map(j => j.id) || []), ...(assigned?.map(j => j.id) || [])])]
-        jobIdsCache.current = { filter: jobFilter, ids: userJobIds }
-      }
-
-      if (userJobIds && userJobIds.length === 0) {
-        setApplications([]); setTotalCount(0); setFilteredCount(0)
-        setStatusCounts({ pending: 0, reviewed: 0, shortlisted: 0, rejected: 0, hired: 0 })
-        setCurrentPage(1); setLoading(false); setFiltering(false); setStatusCountsLoading(false)
-        return
-      }
-
-      // --- Data query: NO JOIN, plain columns only (fastest possible) ---
-      const isFiltered = isSpecificJob || statusFilter !== "all"
-
-      let dataQuery = supabase
-        .from('job_applications')
-        .select('id, job_id, full_name, email, phone, resume_url, cover_letter, status, created_at')
-        .order('created_at', { ascending: false })
-        .range(offset, offset + PAGE_SIZE - 1)
-
-      if (userJobIds && userJobIds.length > 0) dataQuery = dataQuery.in('job_id', userJobIds)
-      if (isSpecificJob) dataQuery = dataQuery.eq('job_id', jobFilter)
-      if (statusFilter === "all") { dataQuery = dataQuery.neq('status', 'rejected') }
-      else { dataQuery = dataQuery.eq('status', statusFilter) }
-
-      const { data: applicationsData, error: applicationsError } = await dataQuery
-      if (applicationsError) throw applicationsError
-      if (currentFetchId !== fetchIdRef.current) return
-
-      // --- Enrich with job info from cache or quick batch fetch ---
-      if (applicationsData) {
-        const missingJobIds = [...new Set(applicationsData.map(a => a.job_id))]
-          .filter(id => !jobMapCache.current.has(id))
-
-        if (missingJobIds.length > 0) {
-          const { data: jobsData } = await supabase
-            .from('jobs').select('id, title, department').in('id', missingJobIds)
-          jobsData?.forEach(j => jobMapCache.current.set(j.id, j))
-        }
-
-        const transformedData: JobApplication[] = applicationsData.map(app => ({
-          ...app,
-          job: jobMapCache.current.get(app.job_id) || undefined
-        }))
-
-        setApplications(transformedData)
-        setCurrentPage(page)
-        setFiltering(false)
-
-        if (page > 1) { setStatusCountsLoading(false); setLoading(false); return }
-      }
-
-      // --- Background counts (page 1 only, non-blocking) ---
-      if (page === 1) {
-        const fetchCounts = async () => {
-          try {
-            const applyFilters = (q: any) => {
-              if (userJobIds && userJobIds.length > 0) q = q.in('job_id', userJobIds)
-              if (isSpecificJob) q = q.eq('job_id', jobFilter)
-              return q
-            }
-
-            let countQ = applyFilters(supabase.from('job_applications').select('id', { count: 'exact', head: true }))
-            if (statusFilter === "all") countQ = countQ.neq('status', 'rejected')
-            else countQ = countQ.eq('status', statusFilter)
-
-            const statusNames = ['pending', 'reviewed', 'shortlisted', 'rejected', 'hired'] as const
-            const statusQs = statusNames.map(s =>
-              applyFilters(supabase.from('job_applications').select('id', { count: 'exact', head: true }).eq('status', s))
-            )
-
-            const [countRes, ...statusRes] = await Promise.all([countQ, ...statusQs])
-            const cnt = countRes?.count || 0
-            if (isFiltered) { setFilteredCount(cnt) } else { setTotalCount(cnt); setFilteredCount(cnt) }
-            setStatusCounts({
-              pending: statusRes[0]?.count || 0, reviewed: statusRes[1]?.count || 0,
-              shortlisted: statusRes[2]?.count || 0, rejected: statusRes[3]?.count || 0,
-              hired: statusRes[4]?.count || 0
-            })
-            setStatusCountsLoading(false)
-          } catch (err) { console.error('Error fetching counts:', err); setStatusCountsLoading(false) }
-        }
-        fetchCounts()
-
-        if (isFiltered && totalCount === 0) {
-          const fetchTotal = async () => {
-            try {
-              let tq = supabase.from('job_applications').select('id', { count: 'exact', head: true }).neq('status', 'rejected')
-              if (userJobIds && userJobIds.length > 0) tq = tq.in('job_id', userJobIds)
-              const { count } = await tq
-              setTotalCount(count || 0)
-            } catch (err) { console.error('Error fetching total count:', err) }
-          }
-          fetchTotal()
-        }
-      }
+      setApplications(data.applications || [])
+      setJobs(data.jobs || [])
+      setTotalCount(data.totalCount || 0)
+      setFilteredCount(data.filteredCount || 0)
+      setStatusCounts(data.statusCounts || { pending: 0, reviewed: 0, shortlisted: 0, rejected: 0, hired: 0 })
+      setCurrentPage(page)
+      setStatusCountsLoading(false)
     } catch (error: any) {
       const errorMessage = error?.message || error?.code || 'Unknown error'
       console.error('Error fetching applications:', errorMessage, error)
-      
-      // Handle specific timeout error
-      if (error?.code === '57014' || errorMessage?.includes('timeout') || errorMessage?.includes('canceling statement')) {
-        toast.error('Query timeout - Loading most recent applications only')
-        // Fallback: simple query without join, then enrich with job data
-        try {
-          const { data: limitedData, error: fallbackError } = await supabase
-            .from('job_applications')
-            .select('id, job_id, full_name, email, phone, resume_url, cover_letter, status, created_at')
-            .neq('status', 'rejected')
-            .order('created_at', { ascending: false })
-            .limit(25)
-          
-          if (fallbackError) {
-            console.error('Fallback query error:', fallbackError)
-            throw fallbackError
-          }
-          
-          if (limitedData) {
-            // Enrich with job info from already-loaded jobs or fetch minimal job data
-            const jobIds = [...new Set(limitedData.map(a => a.job_id))]
-            const { data: jobsData } = await supabase
-              .from('jobs')
-              .select('id, title, department')
-              .in('id', jobIds)
-            const jobMap = new Map((jobsData || []).map(j => [j.id, j]))
-            const transformedLimitedData: JobApplication[] = limitedData.map((app: any) => ({
-              ...app,
-              job: jobMap.get(app.job_id) || undefined
-            }))
-            setApplications(transformedLimitedData)
-            setStatusCounts({
-              pending: transformedLimitedData.filter(app => app.status === 'pending').length,
-              reviewed: transformedLimitedData.filter(app => app.status === 'reviewed').length,
-              shortlisted: transformedLimitedData.filter(app => app.status === 'shortlisted').length,
-              rejected: 0,
-              hired: transformedLimitedData.filter(app => app.status === 'hired').length
-            })
-            setTotalCount(transformedLimitedData.length)
-            setFilteredCount(transformedLimitedData.length)
-            setCurrentPage(1)
-            setStatusCountsLoading(false)
-            toast.success('Loaded recent applications')
-            return
-          }
-        } catch (fallbackError: any) {
-          console.error('Fallback query also failed:', fallbackError?.message || fallbackError)
-        }
-      }
       
       // Show user-friendly error message
       const displayMessage = errorMessage === 'Unknown error' 
@@ -327,58 +161,8 @@ export default function ApplicationsPage() {
   }
 
   const fetchJobs = async () => {
-    try {
-      // Get current user from admin permission context
-      const userId = userRole?.user_id
-      if (!userId) return
-
-      // Use cached role if available, otherwise fetch
-      let currentRole: string | null = null
-      if (userRoleCache.current && userRoleCache.current.userId === userId) {
-        currentRole = userRoleCache.current.role
-      } else {
-        currentRole = userRole?.role || null
-        if (currentRole) {
-          userRoleCache.current = { userId, role: currentRole }
-        }
-      }
-
-      // Fetch both active and inactive jobs (for dropdown)
-      if (currentRole === 'super_admin') {
-        const { data: jobsData, error: jobsError } = await supabase
-          .from('jobs')
-          .select('id, title, department, status')
-          .order('title', { ascending: true })
-        
-        if (jobsError) throw jobsError
-        if (jobsData) {
-          setJobs(jobsData)
-          jobsData.forEach(j => jobMapCache.current.set(j.id, j))
-        }
-      } else {
-        const { data: createdJobs } = await supabase
-          .from('jobs')
-          .select('id, title, department, status')
-          .eq('created_by', userId)
-          .order('title', { ascending: true })
-        
-        const { data: assignedJobs } = await supabase
-          .from('jobs')
-          .select('id, title, department, status')
-          .eq('assigned_to', userId)
-          .order('title', { ascending: true })
-        
-        const allJobs = [...(createdJobs || []), ...(assignedJobs || [])]
-        const uniqueJobs = allJobs.filter((job, index, self) =>
-          index === self.findIndex((j) => j.id === job.id)
-        )
-        const sorted = uniqueJobs.sort((a, b) => a.title.localeCompare(b.title))
-        setJobs(sorted)
-        sorted.forEach(j => jobMapCache.current.set(j.id, j))
-      }
-    } catch (error) {
-      console.error('Error fetching jobs:', error)
-    }
+    // Jobs are returned with fetchApplications now
+    return
   }
 
   const handleDelete = async (id: string) => {
@@ -403,12 +187,9 @@ export default function ApplicationsPage() {
       }
 
       // Then delete the application record
-      const { error } = await supabase
-        .from('job_applications')
-        .delete()
-        .eq('id', id)
-
-      if (error) throw error
+      const delRes = await fetch(`/api/admin/applications/${id}`, { method: 'DELETE' })
+      const delData = await delRes.json().catch(() => ({}))
+      if (!delRes.ok) throw new Error(delData?.error || 'Failed to delete application')
 
       // Update local state
       const deletedApp = applications.find(app => app.id === id)

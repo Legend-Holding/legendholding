@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react"
 import Image from "next/image"
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
 import { AdminDashboardLayout } from "@/components/admin/dashboard-layout"
 import { DashboardCards } from "@/components/admin/dashboard-card"
 import { UnauthorizedAccess } from "@/components/admin/unauthorized-access"
@@ -23,60 +22,42 @@ interface ContactSubmission {
 }
 
 export function DashboardClient() {
-  const supabase = createClientComponentClient()
   const { userRole, isLoading: permissionsLoading, isSuperAdmin, hasPermission } = useAdminPermissions()
   const [submissions, setSubmissions] = useState<ContactSubmission[]>([])
+  const [submissionsCount, setSubmissionsCount] = useState<number>(0)
   const [jobApplicationsCount, setJobApplicationsCount] = useState<number>(0)
   const [newsArticlesCount, setNewsArticlesCount] = useState<number>(0)
 
   useEffect(() => {
     if (permissionsLoading) return
-    fetchJobApplicationsCount()
+    fetchDashboardStats()
     if (hasPermission("submissions")) fetchSubmissions()
-    if (hasPermission("news")) fetchNewsArticlesCount()
   }, [permissionsLoading, userRole?.id])
 
 
 
   const fetchSubmissions = async () => {
     try {
-      const { data, error } = await supabase
-        .from("contact_submissions")
-        .select("*")
-        .order("created_at", { ascending: false })
-
-      if (error) throw error
-
-      setSubmissions(data || [])
+      const res = await fetch('/api/admin/submissions', { cache: 'no-store' })
+      const data = await res.json().catch(() => [])
+      if (!res.ok) throw new Error(data?.error || 'Failed to fetch submissions')
+      setSubmissions(Array.isArray(data) ? data : [])
     } catch (error) {
       console.error("Error fetching submissions:", error)
       toast.error("Failed to fetch submissions")
     }
   }
 
-  const fetchJobApplicationsCount = async () => {
+  const fetchDashboardStats = async () => {
     try {
-      const { count, error } = await supabase
-        .from('job_applications')
-        .select('id', { count: 'exact', head: true })
-
-      if (error) throw error
-      setJobApplicationsCount(count || 0)
+      const res = await fetch('/api/admin/dashboard/stats', { cache: 'no-store' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error || 'Failed to fetch dashboard stats')
+      setSubmissionsCount(data.submissionsCount ?? 0)
+      setJobApplicationsCount(data.jobApplicationsCount ?? 0)
+      setNewsArticlesCount(data.newsArticlesCount ?? 0)
     } catch (error) {
-      console.error('Error fetching job applications count:', error)
-    }
-  }
-
-  const fetchNewsArticlesCount = async () => {
-    try {
-      const { count, error } = await supabase
-        .from('news_articles')
-        .select('id', { count: 'exact', head: true })
-
-      if (error) throw error
-      setNewsArticlesCount(count || 0)
-    } catch (error) {
-      console.error('Error fetching news articles count:', error)
+      console.error('Error fetching dashboard stats:', error)
     }
   }
 
@@ -139,6 +120,7 @@ export function DashboardClient() {
             <h2 className="text-sm font-medium uppercase tracking-wider text-muted-foreground mb-5">Overview</h2>
             <DashboardCards
               submissions={submissions}
+              submissionsCount={submissionsCount}
               jobApplicationsCount={jobApplicationsCount}
               newsArticlesCount={newsArticlesCount}
               isSuperAdmin={isSuperAdmin}

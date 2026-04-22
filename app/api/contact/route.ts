@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { query } from '@/lib/db';
 import {
   checkRateLimit,
   isSpamSubmission,
@@ -9,8 +9,6 @@ import {
 } from '@/lib/anti-spam';
 
 export async function POST(request: Request) {
-  const supabase = createClientComponentClient();
-  
   try {
     const clientIp = getClientIp(request);
 
@@ -63,23 +61,17 @@ export async function POST(request: Request) {
     }
 
     // Insert into contact_submissions table
-    const { data, error } = await supabase
-      .from('contact_submissions')
-      .insert([
-        {
-          name: body.name,
-          email: body.email,
-          phone: body.phone || null,
-          subject: body.subject,
-          message: body.message,
-          status: 'pending'
-        }
-      ]);
-
-    if (error) {
-      console.error('Supabase error:', error);
+    try {
+      await query(
+        `INSERT INTO contact_submissions
+         (name, email, phone, subject, message, status)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [body.name, body.email, body.phone || null, body.subject, body.message, 'pending']
+      );
+    } catch (error: any) {
+      console.error('Postgres error:', error);
       return NextResponse.json(
-        { error: error.message || 'Failed to submit contact form' },
+        { error: error?.message || 'Failed to submit contact form' },
         { status: 500 }
       );
     }

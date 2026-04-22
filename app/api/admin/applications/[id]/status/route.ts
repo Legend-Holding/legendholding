@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { sendApplicationRejectionEmail } from '@/lib/email';
+import { query } from '@/lib/db';
+import { ADMIN_SESSION_COOKIE, verifyAdminSessionToken } from '@/lib/admin-auth';
 
 const VALID_STATUSES = ['pending', 'reviewed', 'shortlisted', 'rejected', 'hired'];
 
@@ -25,51 +25,38 @@ export async function PATCH(
       );
     }
 
-    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-      return NextResponse.json({ error: 'Server configuration error' }, { status: 500 });
-    }
-
-    // Next.js 15: cookies() is async and must be awaited before use
     const cookieStore = await cookies();
-    const supabaseAuth = createRouteHandlerClient({
-      cookies: () => cookieStore,
-    });
-    const { data: { session } } = await supabaseAuth.auth.getSession();
-    if (!session?.user) {
+    const token = cookieStore.get(ADMIN_SESSION_COOKIE)?.value;
+    const payload = token ? verifyAdminSessionToken(token) : null;
+    if (!payload?.sub) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_ROLE_KEY,
-      { auth: { autoRefreshToken: false, persistSession: false } }
+    const roleResult = await query(
+      `SELECT role
+       FROM user_roles
+       WHERE user_id = $1
+       LIMIT 1`,
+      [payload.sub]
     );
-
-    const { data: roleData, error: roleError } = await supabase
-      .from('user_roles')
-      .select('role')
-      .eq('user_id', session.user.id)
-      .single();
-
-    if (roleError || !roleData) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-    const role = (roleData as { role: string }).role;
+    const role = roleResult.rows[0]?.role as string | undefined;
     if (role !== 'super_admin' && role !== 'admin') {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     // Rejected applications cannot be changed to any other status
-    const { data: currentApp, error: currentError } = await supabase
-      .from('job_applications')
-      .select('status')
-      .eq('id', applicationId)
-      .single();
-
-    if (currentError || !currentApp) {
+    const currentResult = await query(
+      `SELECT status
+       FROM job_applications
+       WHERE id = $1
+       LIMIT 1`,
+      [applicationId]
+    );
+    const currentApp = currentResult.rows[0] as { status: string } | undefined;
+    if (!currentApp) {
       return NextResponse.json({ error: 'Application not found' }, { status: 404 });
     }
-    const currentStatus = (currentApp as { status: string }).status;
+    const currentStatus = currentApp.status;
     if (currentStatus === 'rejected') {
       return NextResponse.json(
         { error: 'Rejected applications cannot be changed.' },
@@ -83,16 +70,14 @@ export async function PATCH(
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
 
-      const { count: todayRejectionCount, error: countError } = await supabase
-        .from('job_applications')
-        .select('id', { count: 'exact', head: true })
-        .eq('status', 'rejected')
-        .gte('updated_at', todayStart.toISOString());
-
-      if (countError) {
-        console.error('Error checking daily rejection count:', countError);
-      }
-
+      const countResult = await query(
+        `SELECT COUNT(*)::int AS count
+         FROM job_applications
+         WHERE status = $1
+           AND updated_at >= $2`,
+        ['rejected', todayStart.toISOString()]
+      );
+      const todayRejectionCount = countResult.rows[0]?.count ?? 0;
       if ((todayRejectionCount ?? 0) >= DAILY_REJECTION_LIMIT) {
         return NextResponse.json(
           {
@@ -104,39 +89,34 @@ export async function PATCH(
       }
       // --- End limit check ---
 
-      const { data: application, error: fetchError } = await supabase
-        .from('job_applications')
-        .select(`
-          id,
-          full_name,
-          email,
-          job:jobs(id, title, department)
-        `)
-        .eq('id', applicationId)
-        .single();
-
-      if (fetchError || !application) {
+      const applicationResult = await query(
+        `SELECT ja.id, ja.full_name, ja.email, j.id AS job_id, j.title, j.department
+         FROM job_applications ja
+         LEFT JOIN jobs j ON j.id = ja.job_id
+         WHERE ja.id = $1
+         LIMIT 1`,
+        [applicationId]
+      );
+      const application = applicationResult.rows[0];
+      if (!application) {
         return NextResponse.json({ error: 'Application not found' }, { status: 404 });
       }
 
-      const job = Array.isArray((application as any).job) ? (application as any).job[0] : (application as any).job;
-      const positionTitle = job?.title ?? 'the position you applied for';
-      const fullName = (application as any).full_name ?? '';
+      const positionTitle = application?.title ?? 'the position you applied for';
+      const fullName = application?.full_name ?? '';
       const applicantFirstName = fullName.trim().split(/\s+/)[0] || 'Applicant';
-      const applicantEmail = (application as any).email;
+      const applicantEmail = application?.email;
 
       if (!applicantEmail) {
         return NextResponse.json({ error: 'Application has no email' }, { status: 400 });
       }
 
-      const { error: updateError } = await supabase
-        .from('job_applications')
-        .update({ status: 'rejected' })
-        .eq('id', applicationId);
-
-      if (updateError) {
-        return NextResponse.json({ error: updateError.message }, { status: 500 });
-      }
+      await query(
+        `UPDATE job_applications
+         SET status = $1, updated_at = NOW()
+         WHERE id = $2`,
+        ['rejected', applicationId]
+      );
 
       let emailSent = false;
       if (process.env.RESEND_API_KEY) {
@@ -155,14 +135,12 @@ export async function PATCH(
       return NextResponse.json({ success: true, status: 'rejected', emailSent });
     }
 
-    const { error: updateError } = await supabase
-      .from('job_applications')
-      .update({ status: newStatus })
-      .eq('id', applicationId);
-
-    if (updateError) {
-      return NextResponse.json({ error: updateError.message }, { status: 500 });
-    }
+    await query(
+      `UPDATE job_applications
+       SET status = $1, updated_at = NOW()
+       WHERE id = $2`,
+      [newStatus, applicationId]
+    );
 
     return NextResponse.json({ success: true, status: newStatus });
   } catch (error) {

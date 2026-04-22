@@ -4,6 +4,7 @@ import Link from "next/link"
 
 interface DashboardCardsProps {
   submissions: any[]
+  submissionsCount?: number
   jobApplicationsCount?: number
   newsArticlesCount?: number
   isSuperAdmin?: boolean
@@ -11,11 +12,12 @@ interface DashboardCardsProps {
   hasPermission?: (permission: 'submissions' | 'news' | 'applications') => boolean
 }
 
-export function DashboardCards({ submissions, jobApplicationsCount = 0, newsArticlesCount = 0, isSuperAdmin = false, hasPermission }: DashboardCardsProps) {
+export function DashboardCards({ submissions, submissionsCount, jobApplicationsCount = 0, newsArticlesCount = 0, isSuperAdmin = false, hasPermission }: DashboardCardsProps) {
+  const contactSubmissionsCount = typeof submissionsCount === 'number' ? submissionsCount : submissions.length
   const allCards = [
     {
       title: "Contact Submissions",
-      value: submissions.length,
+      value: contactSubmissionsCount,
       icon: MessageSquare,
       color: "blue" as const,
       description: "View and manage contact form submissions",

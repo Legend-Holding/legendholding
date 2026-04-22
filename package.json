@@ -10,6 +10,9 @@
     "start": "next start",
     "start:staging": "dotenv -e .env.staging -- next start",
     "db:test:staging": "dotenv -e .env.staging -- node scripts/test-db-connection.js",
+    "resumes:manifest:staging": "dotenv -e .env.staging -- node scripts/export-resume-manifest.js",
+    "resumes:find-non-base64:staging": "dotenv -e .env.staging -- node scripts/find-non-base64-resumes.js",
+    "resumes:fix-one:staging": "dotenv -e .env.staging -- node scripts/fix-single-resume-url.js --",
     "lint": "next lint"
   },
   "dependencies": {

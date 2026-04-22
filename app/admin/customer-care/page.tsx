@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
 import { useRouter } from "next/navigation"
 import { AdminDashboardLayout } from "@/components/admin/dashboard-layout"
 import { CustomerCareTable } from "@/components/admin/customer-care-table"
@@ -44,7 +43,6 @@ function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
 
 export default function CustomerCareManagement() {
   const router = useRouter()
-  const supabase = createClientComponentClient()
   const [complaints, setComplaints] = useState<CustomerCareComplaint[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -56,19 +54,10 @@ export default function CustomerCareManagement() {
     try {
       setLoading(true)
       
-      // Fetch customer care complaints with error handling
-      const { data: complaintsData, error: complaintsError } = await supabase
-        .from("customer_care_complaints")
-        .select("*")
-        .order("created_at", { ascending: false })
-
-      if (complaintsError) {
-        console.error("Error fetching complaints:", complaintsError)
-        toast.error("Failed to fetch complaints")
-        setComplaints([])
-      } else {
-        setComplaints(complaintsData || [])
-      }
+      const res = await fetch('/api/admin/customer-care', { cache: 'no-store' })
+      const data = await res.json().catch(() => [])
+      if (!res.ok) throw new Error(data?.error || 'Failed to fetch complaints')
+      setComplaints(Array.isArray(data) ? data : [])
 
     } catch (error) {
       console.error("Error in fetchData:", error)
@@ -82,12 +71,9 @@ export default function CustomerCareManagement() {
   const handleDeleteComplaint = async (id: string) => {
     try {
       setLoading(true)
-      const { error } = await supabase
-        .from("customer_care_complaints")
-        .delete()
-        .eq('id', id)
-
-      if (error) throw error
+      const res = await fetch(`/api/admin/customer-care/${id}`, { method: 'DELETE' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error || 'Failed to delete complaint')
 
       setComplaints(prev => prev.filter(complaint => complaint.id !== id))
       toast.success("Complaint deleted successfully")
@@ -102,12 +88,13 @@ export default function CustomerCareManagement() {
   const handleUpdateComplaint = async (id: string, data: Partial<CustomerCareComplaint>) => {
     try {
       setLoading(true)
-      const { error } = await supabase
-        .from("customer_care_complaints")
-        .update(data)
-        .eq('id', id)
-
-      if (error) throw error
+      const res = await fetch(`/api/admin/customer-care/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body?.error || 'Failed to update complaint')
 
       setComplaints(prev => 
         prev.map(complaint => 

@@ -146,7 +146,7 @@ export function SubmissionsTable({ submissions = [], loading, onDelete, onUpdate
           </TableHeader>
           <TableBody>
             {paginatedSubmissions.map((submission, index) => (
-              <TableRow key={submission?.id || index}>
+              <TableRow key={`${submission?.id || 'submission'}-${startIndex + index}`}>
                 <TableCell>{startIndex + index + 1}</TableCell>
                 <TableCell className="font-medium">
                   {submission?.created_at ? new Date(submission.created_at).toLocaleDateString() : 'N/A'}

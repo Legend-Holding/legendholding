@@ -1,45 +1,16 @@
-import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+import { query } from '@/lib/db'
 
 export async function GET() {
   try {
-    // Check if service role key is available
-    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-      console.error('SUPABASE_SERVICE_ROLE_KEY environment variable is not set')
-      return NextResponse.json({ error: 'Service role key not configured' }, { status: 500 })
-    }
-
-    if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
-      console.error('NEXT_PUBLIC_SUPABASE_URL environment variable is not set')
-      return NextResponse.json({ error: 'Supabase URL not configured' }, { status: 500 })
-    }
-
-    // Create a service role client that bypasses RLS
-    const supabaseAdmin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_ROLE_KEY,
-      {
-        auth: {
-          autoRefreshToken: false,
-          persistSession: false
-        }
-      }
+    const result = await query(
+      `SELECT *
+       FROM jobs
+       WHERE status = $1
+       ORDER BY created_at DESC`,
+      ['active']
     )
-
-    // Use service role to get all active jobs, bypassing RLS
-    const { data: jobs, error } = await supabaseAdmin
-      .from('jobs')
-      .select('*')
-      .eq('status', 'active')
-      .order('created_at', { ascending: false })
-
-    if (error) {
-      console.error('Error fetching jobs from database:', error)
-      return NextResponse.json({ 
-        error: 'Failed to fetch jobs from database', 
-        details: error.message 
-      }, { status: 500 })
-    }
+    const jobs = result.rows
 
     console.log(`Successfully fetched ${jobs?.length || 0} jobs`)
     return NextResponse.json(jobs || [])

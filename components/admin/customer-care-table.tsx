@@ -145,7 +145,7 @@ export function CustomerCareTable({ complaints = [], loading, onDelete, onUpdate
           </TableHeader>
           <TableBody>
             {paginatedComplaints.map((complaint, index) => (
-              <TableRow key={complaint?.id || index}>
+              <TableRow key={`${complaint?.id || 'complaint'}-${startIndex + index}`}>
                 <TableCell>{startIndex + index + 1}</TableCell>
                 <TableCell className="font-medium">
                   {complaint?.created_at ? new Date(complaint.created_at).toLocaleDateString() : 'N/A'}

@@ -1,5 +1,5 @@
-import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+import { query } from '@/lib/db'
 
 // Simple UUID v4 format check to reject obviously invalid IDs early
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -17,45 +17,15 @@ export async function GET(
       return NextResponse.json({ error: 'Job not found' }, { status: 404 })
     }
 
-    // Check if service role key is available
-    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-      console.error('SUPABASE_SERVICE_ROLE_KEY environment variable is not set')
-      return NextResponse.json({ error: 'Service role key not configured' }, { status: 500 })
-    }
-
-    if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
-      console.error('NEXT_PUBLIC_SUPABASE_URL environment variable is not set')
-      return NextResponse.json({ error: 'Supabase URL not configured' }, { status: 500 })
-    }
-
-    // Create a service role client that bypasses RLS
-    const supabaseAdmin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_ROLE_KEY,
-      {
-        auth: {
-          autoRefreshToken: false,
-          persistSession: false
-        }
-      }
+    const result = await query(
+      `SELECT *
+       FROM jobs
+       WHERE id = $1
+         AND status = $2
+       LIMIT 1`,
+      [id, 'active']
     )
-
-    // Use maybeSingle() instead of single() to avoid PGRST116 error when no rows match.
-    // single() throws an error when 0 rows are found; maybeSingle() returns null data instead.
-    const { data: job, error } = await supabaseAdmin
-      .from('jobs')
-      .select('*')
-      .eq('id', id)
-      .eq('status', 'active')
-      .maybeSingle()
-
-    if (error) {
-      console.error('Error fetching job from database:', error)
-      return NextResponse.json({ 
-        error: 'Failed to fetch job from database', 
-        details: error.message 
-      }, { status: 500 })
-    }
+    const job = result.rows[0]
 
     if (!job) {
       return NextResponse.json({ error: 'Job not found' }, { status: 404 })
