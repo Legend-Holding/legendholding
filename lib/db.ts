@@ -5,6 +5,13 @@ declare global {
   var __pgPool: Pool | undefined
 }
 
+function isBuildTime(): boolean {
+  return (
+    process.env.NEXT_PHASE === 'phase-production-build' ||
+    process.env.VERCEL_ENV === undefined && typeof window === 'undefined' && !process.env.POSTGRES_HOST
+  )
+}
+
 function buildPool(): Pool {
   const {
     POSTGRES_HOST,
@@ -17,6 +24,10 @@ function buildPool(): Pool {
   } = process.env
 
   if (!POSTGRES_HOST || !POSTGRES_DB || !POSTGRES_USER) {
+    if (isBuildTime()) {
+      console.warn('[pg] Skipping pool creation during build time (missing env vars)')
+      return null as unknown as Pool
+    }
     throw new Error(
       'Postgres config missing. Required env: POSTGRES_HOST, POSTGRES_DB, POSTGRES_USER (and POSTGRES_PASSWORD).',
     )
@@ -40,6 +51,9 @@ function buildPool(): Pool {
 function getPool(): Pool {
   if (!global.__pgPool) {
     const p = buildPool()
+    if (!p) {
+      return null as unknown as Pool
+    }
     p.on('error', (err) => {
       // Keep the process alive; log so idle client errors are observable.
       console.error('[pg] idle client error:', err)
