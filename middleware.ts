@@ -15,6 +15,7 @@ const VALID_ROUTE_PREFIXES = new Set([
   '/finance-review',
   '/founder-approval',
   '/home',
+  '/LHGvCard',
   '/news',
   '/our-businesses',
   '/privacy-policy',
