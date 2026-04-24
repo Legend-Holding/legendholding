@@ -67,6 +67,11 @@ const emptyForm = {
 export default function ManagementProfilesPage() {
   const [profiles, setProfiles] = useState<ManagementProfile[]>([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [appliedSearch, setAppliedSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(20);
+  const [total, setTotal] = useState(0);
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editing, setEditing] = useState<ManagementProfile | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -77,26 +82,52 @@ export default function ManagementProfilesPage() {
   const router = useRouter();
   const supabase = createClientComponentClient();
 
-  const fetchProfiles = async () => {
+  const fetchProfiles = async (opts?: { page?: number; query?: string }) => {
+    const nextPage = opts?.page ?? page;
+    const nextQuery = opts?.query ?? appliedSearch;
     try {
-      const res = await fetch("/api/admin/management-profiles", { credentials: "include" });
+      setLoading(true);
+      const params = new URLSearchParams({
+        page: String(nextPage),
+        pageSize: String(pageSize),
+      });
+      if (nextQuery.trim()) params.set("q", nextQuery.trim());
+      const res = await fetch(`/api/admin/management-profiles?${params.toString()}`, { credentials: "include" });
       if (res.status === 401 || res.status === 403) {
         router.push("/admin/login");
         return;
       }
       const data = await res.json();
-      if (Array.isArray(data)) setProfiles(data);
-      else setProfiles([]);
+      if (Array.isArray(data?.items)) {
+        setProfiles(data.items);
+        setTotal(Number(data.total) || 0);
+        setPage(Number(data.page) || nextPage);
+      } else {
+        setProfiles([]);
+        setTotal(0);
+      }
     } catch {
       setProfiles([]);
+      setTotal(0);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchProfiles();
-  }, []);
+    fetchProfiles({ page, query: appliedSearch });
+  }, [page, appliedSearch]);
+
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      const normalized = search.trim();
+      if (normalized !== appliedSearch) {
+        setPage(1);
+        setAppliedSearch(normalized);
+      }
+    }, 300);
+    return () => window.clearTimeout(handle);
+  }, [search, appliedSearch]);
 
   // Generate QR code with logo when dialog opens (use public site URL so scan opens live profile)
   useEffect(() => {
@@ -153,7 +184,7 @@ export default function ManagementProfilesPage() {
       toast.success("Profile added");
       setIsAddOpen(false);
       setForm(emptyForm);
-      fetchProfiles();
+      fetchProfiles({ page, query: appliedSearch });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to add");
     } finally {
@@ -180,7 +211,7 @@ export default function ManagementProfilesPage() {
       toast.success("Profile updated");
       setEditing(null);
       setForm(emptyForm);
-      fetchProfiles();
+      fetchProfiles({ page, query: appliedSearch });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to update");
     } finally {
@@ -202,7 +233,7 @@ export default function ManagementProfilesPage() {
       }
       toast.success("Profile deleted");
       setDeleteId(null);
-      fetchProfiles();
+      fetchProfiles({ page, query: appliedSearch });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to delete");
     } finally {
@@ -233,6 +264,8 @@ export default function ManagementProfilesPage() {
     });
   };
 
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
   return (
     <AdminDashboardLayout onSignOut={handleSignOut}>
       <div className="p-6">
@@ -246,6 +279,28 @@ export default function ManagementProfilesPage() {
         <p className="text-muted-foreground text-sm mb-4">
           Manage profiles for QR-code business cards. Profile pages: /profile/[slug]
         </p>
+        <div className="flex flex-col gap-3 mb-4 md:flex-row md:items-center md:justify-between">
+          <div className="flex w-full max-w-xl gap-2">
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search by name, slug, legacy slug, email, company..."
+            />
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setSearch("");
+                setAppliedSearch("");
+                setPage(1);
+              }}
+            >
+              Clear
+            </Button>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Showing {profiles.length} of {total} profiles
+          </p>
+        </div>
 
         {loading ? (
           <p className="text-muted-foreground">Loading...</p>
@@ -303,6 +358,29 @@ export default function ManagementProfilesPage() {
                 )}
               </TableBody>
             </Table>
+          </div>
+        )}
+        {!loading && total > 0 && (
+          <div className="flex items-center justify-between mt-4">
+            <p className="text-sm text-muted-foreground">
+              Page {page} of {totalPages}
+            </p>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                disabled={page >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
+                Next
+              </Button>
+            </div>
           </div>
         )}
       </div>

@@ -46,15 +46,45 @@ function slugFromName(name: string): string {
     .replace(/[^a-z0-9-]/g, "");
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const { error, supabase } = await requireManagementProfilesAccess();
   if (error) return error;
-  const { data, err } = await supabase!
+  const { searchParams } = new URL(request.url);
+  const query = searchParams.get("q")?.trim() ?? "";
+  const page = Math.max(1, Number(searchParams.get("page") ?? "1") || 1);
+  const pageSize = Math.min(100, Math.max(1, Number(searchParams.get("pageSize") ?? "20") || 20));
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+
+  let builder = supabase!
     .from("management_profiles")
-    .select("*")
-    .order("sort_order", { ascending: true });
+    .select("*", { count: "exact" })
+    .order("sort_order", { ascending: true })
+    .range(from, to);
+
+  if (query) {
+    const escaped = query.replace(/[%_]/g, "\\$&");
+    builder = builder.or(
+      [
+        `name.ilike.%${escaped}%`,
+        `designation.ilike.%${escaped}%`,
+        `slug.ilike.%${escaped}%`,
+        `legacy_slug.ilike.%${escaped}%`,
+        `email.ilike.%${escaped}%`,
+        `company.ilike.%${escaped}%`,
+      ].join(",")
+    );
+  }
+
+  const { data, error: err, count } = await builder;
   if (err) return NextResponse.json({ error: err.message }, { status: 500 });
-  return NextResponse.json(data ?? []);
+  return NextResponse.json({
+    items: data ?? [],
+    total: count ?? 0,
+    page,
+    pageSize,
+    query,
+  });
 }
 
 export async function POST(request: Request) {
