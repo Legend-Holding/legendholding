@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "profiles:restore-featured": "node scripts/restore-featured-management-profiles.js",
     "lint": "next lint"
   },
   "dependencies": {
