@@ -5,14 +5,7 @@ declare global {
   var __pgPool: Pool | undefined
 }
 
-function isBuildTime(): boolean {
-  return (
-    process.env.NEXT_PHASE === 'phase-production-build' ||
-    process.env.VERCEL_ENV === undefined && typeof window === 'undefined' && !process.env.POSTGRES_HOST
-  )
-}
-
-function buildPool(): Pool {
+function buildPool(): Pool | null {
   const {
     POSTGRES_HOST,
     POSTGRES_PORT,
@@ -24,13 +17,7 @@ function buildPool(): Pool {
   } = process.env
 
   if (!POSTGRES_HOST || !POSTGRES_DB || !POSTGRES_USER) {
-    if (isBuildTime()) {
-      console.warn('[pg] Skipping pool creation during build time (missing env vars)')
-      return null as unknown as Pool
-    }
-    throw new Error(
-      'Postgres config missing. Required env: POSTGRES_HOST, POSTGRES_DB, POSTGRES_USER (and POSTGRES_PASSWORD).',
-    )
+    return null
   }
 
   const sslEnabled = String(POSTGRES_SSL ?? 'false').toLowerCase() === 'true'
@@ -48,39 +35,43 @@ function buildPool(): Pool {
   })
 }
 
-function getPool(): Pool {
+function getPool(): Pool | null {
   if (!global.__pgPool) {
     const p = buildPool()
-    if (!p) {
-      return null as unknown as Pool
-    }
+    if (!p) return null
     p.on('error', (err) => {
       // Keep the process alive; log so idle client errors are observable.
       console.error('[pg] idle client error:', err)
     })
     global.__pgPool = p
   }
-  return global.__pgPool
+  return global.__pgPool ?? null
 }
 
-export const pool: Pool = new Proxy({} as Pool, {
-  get(_target, prop, receiver) {
-    const actualPool = getPool()
-    return Reflect.get(actualPool as unknown as object, prop, receiver)
-  },
-})
+function requirePool(): Pool {
+  const p = getPool()
+  if (!p) {
+    throw new Error(
+      'Postgres config missing. Required env: POSTGRES_HOST, POSTGRES_DB, POSTGRES_USER (and POSTGRES_PASSWORD).',
+    )
+  }
+  return p
+}
+
+// Kept for backward compatibility if any caller imports `pool` directly.
+export const pool = null as unknown as Pool
 
 export async function query<T extends QueryResultRow = QueryResultRow>(
   text: string,
   params?: readonly unknown[],
 ): Promise<QueryResult<T>> {
-  return getPool().query<T>(text, params as unknown[] | undefined)
+  return requirePool().query<T>(text, params as unknown[] | undefined)
 }
 
 export async function withTransaction<T>(
   fn: (client: PoolClient) => Promise<T>,
 ): Promise<T> {
-  const client = await getPool().connect()
+  const client = await requirePool().connect()
   try {
     await client.query('BEGIN')
     const result = await fn(client)
@@ -96,7 +87,7 @@ export async function withTransaction<T>(
 
 export async function checkDbConnection(): Promise<boolean> {
   try {
-    const result = await getPool().query('SELECT 1 AS ok')
+    const result = await requirePool().query('SELECT 1 AS ok')
     return result.rows?.[0]?.ok === 1
   } catch (err) {
     console.error('[pg] connection check failed:', err)
