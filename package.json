@@ -14,6 +14,8 @@
     "profiles:import:staging": "dotenv -e .env.staging -- node scripts/import-management-profiles-from-csv.js",
     "profiles:images:dry:staging": "dotenv -e .env.staging -e .env -- node scripts/sync-vcard-images-to-cloudinary.js --dry-run",
     "profiles:images:staging": "dotenv -e .env.staging -e .env -- node scripts/sync-vcard-images-to-cloudinary.js",
+    "profiles:restore-featured:staging": "dotenv -e .env.staging -- node scripts/restore-featured-management-profiles.js",
+    "profiles:restore-featured": "dotenv -e .env -- node scripts/restore-featured-management-profiles.js",
     "resumes:manifest:staging": "dotenv -e .env.staging -- node scripts/export-resume-manifest.js",
     "resumes:find-non-base64:staging": "dotenv -e .env.staging -- node scripts/find-non-base64-resumes.js",
     "resumes:fix-one:staging": "dotenv -e .env.staging -- node scripts/fix-single-resume-url.js --",
