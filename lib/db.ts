@@ -37,28 +37,36 @@ function buildPool(): Pool {
   })
 }
 
-export const pool: Pool =
-  global.__pgPool ??
-  (global.__pgPool = (() => {
+function getPool(): Pool {
+  if (!global.__pgPool) {
     const p = buildPool()
     p.on('error', (err) => {
       // Keep the process alive; log so idle client errors are observable.
       console.error('[pg] idle client error:', err)
     })
-    return p
-  })())
+    global.__pgPool = p
+  }
+  return global.__pgPool
+}
+
+export const pool: Pool = new Proxy({} as Pool, {
+  get(_target, prop, receiver) {
+    const actualPool = getPool()
+    return Reflect.get(actualPool as unknown as object, prop, receiver)
+  },
+})
 
 export async function query<T extends QueryResultRow = QueryResultRow>(
   text: string,
   params?: readonly unknown[],
 ): Promise<QueryResult<T>> {
-  return pool.query<T>(text, params as unknown[] | undefined)
+  return getPool().query<T>(text, params as unknown[] | undefined)
 }
 
 export async function withTransaction<T>(
   fn: (client: PoolClient) => Promise<T>,
 ): Promise<T> {
-  const client = await pool.connect()
+  const client = await getPool().connect()
   try {
     await client.query('BEGIN')
     const result = await fn(client)
@@ -74,7 +82,7 @@ export async function withTransaction<T>(
 
 export async function checkDbConnection(): Promise<boolean> {
   try {
-    const result = await pool.query('SELECT 1 AS ok')
+    const result = await getPool().query('SELECT 1 AS ok')
     return result.rows?.[0]?.ok === 1
   } catch (err) {
     console.error('[pg] connection check failed:', err)
