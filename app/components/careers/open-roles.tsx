@@ -63,7 +63,7 @@ export default function OpenRoles() {
           {/* Image Side - Desktop only */}
           <div className="relative h-[300px] md:h-[500px] rounded-2xl overflow-hidden hidden md:block">
             <Image
-              src="https://cdn.legendholding.com/images/cdn_684bcbb1411ca6.12573119_20250613_065649.jpg"
+              src="https://cdn.legendholding.com/images/cdn_69f486da0031e1.53498927_20260501_105626.webp"
               alt="Office workspace"
               fill
               className="object-cover"
