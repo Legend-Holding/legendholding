@@ -14,9 +14,12 @@ export async function getProfileBySlug(slug: string): Promise<TeamMember | null>
   });
   const { data, error } = await supabase
     .from("management_profiles")
-    .select("slug, name, designation, company, photo, email, whatsapp, linkedin, website, location")
+    .select("slug, name, designation, company, photo, email, telephone, whatsapp, linkedin, website, location, location_link")
     .eq("slug", slug)
     .single();
   if (error || !data) return null;
-  return data as TeamMember;
+  return {
+    ...(data as Omit<TeamMember, "phone"> & { telephone?: string }),
+    phone: (data as { telephone?: string }).telephone ?? "",
+  } as TeamMember;
 }

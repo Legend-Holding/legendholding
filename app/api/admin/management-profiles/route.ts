@@ -1,7 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { query } from "@/lib/db";
+import { ADMIN_SESSION_COOKIE, verifyAdminSessionToken } from "@/lib/admin-auth";
 
 const BUSINESS_CARDS_ONLY_ADMIN_EMAIL = "admin@legendholding.com";
 
@@ -13,28 +14,42 @@ async function requireManagementProfilesAccess() {
     return { error: NextResponse.json({ error: "Server config error" }, { status: 500 }), supabase: null };
   }
   const cookieStore = await cookies();
-  const supabaseAuth = createRouteHandlerClient({ cookies: () => cookieStore });
-  const { data: { session } } = await supabaseAuth.auth.getSession();
-  if (!session?.user) {
+  const token = cookieStore.get(ADMIN_SESSION_COOKIE)?.value;
+  if (!token) {
     return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }), supabase: null };
   }
-  if (session.user.email === BUSINESS_CARDS_ONLY_ADMIN_EMAIL) {
+
+  const payload = verifyAdminSessionToken(token);
+  if (!payload?.sub || !payload?.email) {
+    return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }), supabase: null };
+  }
+
+  if (payload.email.toLowerCase() === BUSINESS_CARDS_ONLY_ADMIN_EMAIL) {
     const supabase = createClient(supabaseUrl, serviceKey, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
     return { error: null, supabase };
   }
+
   const supabase = createClient(supabaseUrl, serviceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
-  const { data: roleData, error: roleError } = await supabase
-    .from("user_roles")
-    .select("role")
-    .eq("user_id", session.user.id)
-    .single();
-  if (roleError || !roleData || (roleData as { role: string }).role !== "super_admin") {
+
+  const roleResult = await query<{ role: string; permissions: Record<string, boolean> | null }>(
+    `SELECT role, permissions
+     FROM user_roles
+     WHERE user_id = $1
+     LIMIT 1`,
+    [payload.sub],
+  );
+  const roleData = roleResult.rows[0];
+  const hasManagementProfilesPermission = roleData?.permissions?.management_profiles === true;
+  const isSuperAdmin = roleData?.role === "super_admin";
+
+  if (!roleData || (!isSuperAdmin && !hasManagementProfilesPermission)) {
     return { error: NextResponse.json({ error: "Forbidden" }, { status: 403 }), supabase: null };
   }
+
   return { error: null, supabase };
 }
 
@@ -51,6 +66,7 @@ export async function GET(request: Request) {
   if (error) return error;
   const { searchParams } = new URL(request.url);
   const query = searchParams.get("q")?.trim() ?? "";
+  const version = (searchParams.get("version")?.trim().toLowerCase() ?? "all") as "all" | "new" | "old";
   const page = Math.max(1, Number(searchParams.get("page") ?? "1") || 1);
   const pageSize = Math.min(100, Math.max(1, Number(searchParams.get("pageSize") ?? "20") || 20));
   const from = (page - 1) * pageSize;
@@ -76,6 +92,12 @@ export async function GET(request: Request) {
     );
   }
 
+  if (version === "old") {
+    builder = builder.eq("source", "imported");
+  } else if (version === "new") {
+    builder = builder.eq("source", "new");
+  }
+
   const { data, error: err, count } = await builder;
   if (err) return NextResponse.json({ error: err.message }, { status: 500 });
   return NextResponse.json({
@@ -84,6 +106,7 @@ export async function GET(request: Request) {
     page,
     pageSize,
     query,
+    version,
   });
 }
 
@@ -97,10 +120,12 @@ export async function POST(request: Request) {
     company = "Legend Holding Group",
     photo,
     email = "",
+    telephone = "",
     whatsapp = "",
     linkedin = "",
     website = "",
     location = "",
+    location_link = "",
   } = body;
   if (!name || !designation || !photo) {
     return NextResponse.json(
@@ -130,11 +155,14 @@ export async function POST(request: Request) {
       company: String(company).trim(),
       photo: String(photo).trim(),
       email: String(email).trim(),
+      telephone: String(telephone).trim(),
       whatsapp: String(whatsapp).trim(),
       linkedin: String(linkedin).trim(),
       website: String(website).trim(),
       location: String(location).trim(),
+      location_link: String(location_link).trim(),
       sort_order: sort_order + 1,
+      source: "new",
     })
     .select()
     .single();

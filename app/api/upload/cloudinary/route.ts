@@ -1,8 +1,11 @@
 import { createClient } from "@supabase/supabase-js";
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { v2 as cloudinary } from "cloudinary";
+import { query } from "@/lib/db";
+import { ADMIN_SESSION_COOKIE, verifyAdminSessionToken } from "@/lib/admin-auth";
+
+const BUSINESS_CARDS_ONLY_ADMIN_EMAIL = "admin@legendholding.com";
 
 export async function POST(request: Request) {
   try {
@@ -17,18 +20,35 @@ export async function POST(request: Request) {
     }
 
     const cookieStore = await cookies();
-    const supabaseAuth = createRouteHandlerClient({ cookies: () => cookieStore });
-    const { data: { session } } = await supabaseAuth.auth.getSession();
-    if (!session?.user) {
+    const token = cookieStore.get(ADMIN_SESSION_COOKIE)?.value;
+    if (!token) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      { auth: { autoRefreshToken: false, persistSession: false } }
-    );
-    const { data: roleData } = await supabase.from("user_roles").select("role").eq("user_id", session.user.id).single();
-    if (!roleData || (roleData as { role: string }).role !== "super_admin") {
+
+    const payload = verifyAdminSessionToken(token);
+    if (!payload?.sub || !payload?.email) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Keep business-cards-only admin access parity with management profiles APIs.
+    if (payload.email.toLowerCase() !== BUSINESS_CARDS_ONLY_ADMIN_EMAIL) {
+      const roleResult = await query<{ role: string; permissions: Record<string, boolean> | null }>(
+        `SELECT role, permissions
+         FROM user_roles
+         WHERE user_id = $1
+         LIMIT 1`,
+        [payload.sub],
+      );
+      const roleData = roleResult.rows[0];
+      const hasManagementProfilesPermission = roleData?.permissions?.management_profiles === true;
+      const isSuperAdmin = roleData?.role === "super_admin";
+      if (!roleData || (!isSuperAdmin && !hasManagementProfilesPermission)) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+    }
+
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      // Keep explicit config check for consistency with other server routes.
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

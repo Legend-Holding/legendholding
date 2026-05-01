@@ -147,6 +147,7 @@ async function main() {
       website,
       location: "",
       sort_order: prepared.length + 1,
+      source: "imported",
       import_meta: {
         source_id: sourceId,
         source_employee_code: sourceEmployeeCode,

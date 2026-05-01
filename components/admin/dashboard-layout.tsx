@@ -20,7 +20,8 @@ import {
   Headphones,
   Contact,
   Users,
-  UserCog
+  UserCog,
+  Building2
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -103,6 +104,13 @@ const menuItems = [
     superAdminOnly: false
   },
   {
+    title: "Companies",
+    icon: Building2,
+    href: "/admin/companies",
+    permission: "management_profiles" as const,
+    superAdminOnly: false
+  },
+  {
     title: "Team Members",
     icon: Users,
     href: "/admin/team-members",
@@ -128,10 +136,11 @@ export function AdminDashboardLayout({ children, onSignOut }: AdminDashboardLayo
   const router = useRouter()
   const { userRole, isLoading, isSuperAdmin, isBusinessCardsOnlyAdmin, hasPermission, roleLabel } = useAdminPermissions()
 
-  // Business-cards-only admin: only allow /admin/management-profiles
+  // Business-cards-only admin: only allow management-profiles + companies tabs
   useEffect(() => {
     if (isLoading || !isBusinessCardsOnlyAdmin) return
-    if (pathname !== "/admin/management-profiles") {
+    const allowedPaths = ["/admin/management-profiles", "/admin/companies"]
+    if (!allowedPaths.includes(pathname)) {
       router.replace("/admin/management-profiles")
     }
   }, [isLoading, isBusinessCardsOnlyAdmin, pathname, router])
