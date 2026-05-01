@@ -18,21 +18,25 @@ async function requireManagementProfilesAccess() {
   if (!session?.user) {
     return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }), supabase: null };
   }
-  if (session.user.email === BUSINESS_CARDS_ONLY_ADMIN_EMAIL) {
-    const supabase = createClient(supabaseUrl, serviceKey, {
-      auth: { autoRefreshToken: false, persistSession: false },
-    });
-    return { error: null, supabase };
-  }
   const supabase = createClient(supabaseUrl, serviceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
+  if (session.user.email === BUSINESS_CARDS_ONLY_ADMIN_EMAIL) {
+    return { error: null, supabase };
+  }
   const { data: roleData, error: roleError } = await supabase
     .from("user_roles")
-    .select("role")
+    .select("role, permissions")
     .eq("user_id", session.user.id)
     .single();
-  if (roleError || !roleData || (roleData as { role: string }).role !== "super_admin") {
+  if (roleError || !roleData) {
+    return { error: NextResponse.json({ error: "Forbidden" }, { status: 403 }), supabase: null };
+  }
+  const role = (roleData as { role: string; permissions: Record<string, boolean> | null }).role;
+  const permissions = (roleData as { permissions: Record<string, boolean> | null }).permissions;
+  const isSuperAdmin = role === "super_admin";
+  const hasManagementProfilesPermission = permissions?.management_profiles === true;
+  if (!isSuperAdmin && !hasManagementProfilesPermission) {
     return { error: NextResponse.json({ error: "Forbidden" }, { status: 403 }), supabase: null };
   }
   return { error: null, supabase };
@@ -51,6 +55,7 @@ export async function GET(request: Request) {
   if (error) return error;
   const { searchParams } = new URL(request.url);
   const query = searchParams.get("q")?.trim() ?? "";
+  const version = (searchParams.get("version")?.trim().toLowerCase() ?? "all") as "all" | "new" | "old";
   const page = Math.max(1, Number(searchParams.get("page") ?? "1") || 1);
   const pageSize = Math.min(100, Math.max(1, Number(searchParams.get("pageSize") ?? "20") || 20));
   const from = (page - 1) * pageSize;
@@ -76,6 +81,12 @@ export async function GET(request: Request) {
     );
   }
 
+  if (version === "old") {
+    builder = builder.eq("source", "imported");
+  } else if (version === "new") {
+    builder = builder.eq("source", "new");
+  }
+
   const { data, error: err, count } = await builder;
   if (err) return NextResponse.json({ error: err.message }, { status: 500 });
   return NextResponse.json({
@@ -84,6 +95,7 @@ export async function GET(request: Request) {
     page,
     pageSize,
     query,
+    version,
   });
 }
 
@@ -97,10 +109,12 @@ export async function POST(request: Request) {
     company = "Legend Holding Group",
     photo,
     email = "",
+    telephone = "",
     whatsapp = "",
     linkedin = "",
     website = "",
     location = "",
+    location_link = "",
   } = body;
   if (!name || !designation || !photo) {
     return NextResponse.json(
@@ -130,11 +144,14 @@ export async function POST(request: Request) {
       company: String(company).trim(),
       photo: String(photo).trim(),
       email: String(email).trim(),
+      telephone: String(telephone).trim(),
       whatsapp: String(whatsapp).trim(),
       linkedin: String(linkedin).trim(),
       website: String(website).trim(),
       location: String(location).trim(),
+      location_link: String(location_link).trim(),
       sort_order: sort_order + 1,
+      source: "new",
     })
     .select()
     .single();

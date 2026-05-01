@@ -4,6 +4,8 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { v2 as cloudinary } from "cloudinary";
 
+const BUSINESS_CARDS_ONLY_ADMIN_EMAIL = "admin@legendholding.com";
+
 export async function POST(request: Request) {
   try {
     const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME || process.env.CLOUDINARY_CLOUD_NAME;
@@ -22,14 +24,28 @@ export async function POST(request: Request) {
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!,
       { auth: { autoRefreshToken: false, persistSession: false } }
     );
-    const { data: roleData } = await supabase.from("user_roles").select("role").eq("user_id", session.user.id).single();
-    if (!roleData || (roleData as { role: string }).role !== "super_admin") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+    // Allow super_admin, anyone with management_profiles permission, or the
+    // dedicated business-cards-only admin (admin@legendholding.com).
+    if (session.user.email !== BUSINESS_CARDS_ONLY_ADMIN_EMAIL) {
+      const { data: roleData } = await supabase
+        .from("user_roles")
+        .select("role, permissions")
+        .eq("user_id", session.user.id)
+        .single();
+      const role = (roleData as { role?: string } | null)?.role;
+      const permissions = (roleData as { permissions?: Record<string, boolean> | null } | null)?.permissions;
+      const isSuperAdmin = role === "super_admin";
+      const hasManagementProfilesPermission = permissions?.management_profiles === true;
+      if (!roleData || (!isSuperAdmin && !hasManagementProfilesPermission)) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
     }
 
     const formData = await request.formData();

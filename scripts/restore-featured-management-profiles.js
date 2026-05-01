@@ -103,9 +103,9 @@ async function main() {
   })
 
   for (const profile of FEATURED) {
-    const { error } = await supabase.from("management_profiles").upsert(profile, {
-      onConflict: "slug",
-    })
+    const { error } = await supabase
+      .from("management_profiles")
+      .upsert({ ...profile, source: "new" }, { onConflict: "slug" })
     if (error) {
       throw new Error(`Failed for ${profile.slug}: ${error.message}`)
     }

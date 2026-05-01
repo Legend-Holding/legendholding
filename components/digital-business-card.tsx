@@ -31,6 +31,14 @@ function WhatsAppIcon({ className = "w-6 h-6" }: { className?: string }) {
   );
 }
 
+function LocationIcon({ className = "w-6 h-6" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="currentColor" aria-hidden>
+      <path d="M12 2C8.134 2 5 5.134 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.866-3.134-7-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z" />
+    </svg>
+  );
+}
+
 /** Download icon: only the arrow bounces (horizontal line stays static) */
 function DownloadIcon({ className = "w-4 h-4" }: { className?: string }) {
   return (
@@ -57,11 +65,70 @@ export interface TeamMember {
   linkedin?: string;
   whatsapp?: string;
   location?: string;
+  location_link?: string;
   website?: string;
 }
 
 interface DigitalBusinessCardProps {
   member: TeamMember;
+}
+
+function getMapsLink(member: TeamMember): string {
+  let raw = (member.location_link || "").trim();
+  if (raw) {
+    // If someone pasted an entire iframe snippet, extract the src URL first.
+    const srcMatch = raw.match(/src=["']([^"']+)["']/i);
+    if (srcMatch?.[1]) {
+      raw = srcMatch[1].trim();
+    }
+
+    // Some records store Google Maps "embed" URLs, which only work in iframes.
+    // Convert them to a regular maps URL so clicking opens correctly.
+    if (raw.includes("google.com/maps/embed")) {
+      try {
+        const url = new URL(raw);
+        const pb = url.searchParams.get("pb");
+        // Prefer saved address text so Google shows place/address label
+        // instead of raw coordinates.
+        if (member.location) {
+          return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(member.location)}`;
+        }
+        // Best effort: extract coordinates from embed payload and open
+        // a direct map query, which is reliable across mobile/desktop.
+        if (pb) {
+          const coordMatch = pb.match(/!2d(-?\d+(?:\.\d+)?)!3d(-?\d+(?:\.\d+)?)/);
+          if (coordMatch) {
+            const lng = coordMatch[1];
+            const lat = coordMatch[2];
+            return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+          }
+          return `https://www.google.com/maps?pb=${pb}`;
+        }
+
+        // Some embed URLs use q/query in place of pb
+        const q = url.searchParams.get("q") || url.searchParams.get("query");
+        if (q) {
+          return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
+        }
+        if (member.location) {
+          return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(member.location)}`;
+        }
+        return "https://www.google.com/maps";
+      } catch {
+        if (member.location) {
+          return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(member.location)}`;
+        }
+        return "https://www.google.com/maps";
+      }
+    }
+    return raw;
+  }
+
+  if (member.location) {
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(member.location)}`;
+  }
+
+  return "https://www.google.com/maps";
 }
 
 // Escape vCard 3.0 special characters: \ → \\ , ; → \;
@@ -72,6 +139,11 @@ function escapeVCardValue(value: string): string {
 export function DigitalBusinessCard({ member }: DigitalBusinessCardProps) {
   const [qrOpen, setQrOpen] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [photoSrc, setPhotoSrc] = useState(member.photo || "/placeholder.svg");
+
+  useEffect(() => {
+    setPhotoSrc(member.photo || "/placeholder.svg");
+  }, [member.photo]);
 
   // Generate QR with logo for production profile URL when dialog opens (so scan always opens live site)
   useEffect(() => {
@@ -195,13 +267,14 @@ END:VCARD`;
           {/* Profile Photo - slightly taller than square */}
           <div className="relative aspect-[4/5] w-full block overflow-hidden leading-[0] shrink-0 [contain:strict]">
             <Image
-              src={member.photo || "/placeholder.svg"}
+              src={photoSrc}
               alt={member.name}
               fill
               className="object-cover object-[50%_40%] block outline-none align-bottom"
               sizes="(max-width: 448px) 100vw, 448px"
               priority
               style={{ outline: 'none', verticalAlign: 'bottom' }}
+              onError={() => setPhotoSrc("/placeholder.svg")}
             />
             {/* Bottom gradient: smooth blend from image into card color, no hard edge */}
             <div
@@ -254,7 +327,7 @@ END:VCARD`;
               <div className="flex-1 h-px bg-white" />
             </div>
 
-            {/* WhatsApp, LinkedIn & Web (globe) icons - website from admin is 3rd icon only */}
+            {/* WhatsApp, LinkedIn, Web (globe) and Location icons */}
             <div className="flex justify-center gap-6 mb-8">
               <a
                 href={member.whatsapp ? `https://wa.me/${member.whatsapp.replace(/\D/g, "")}` : "https://wa.me/9714XXXXXXX"}
@@ -279,6 +352,14 @@ END:VCARD`;
                 className="w-12 h-12 rounded-full border-[3px] border-white flex items-center justify-center transition-opacity hover:opacity-90"
               >
                 <Globe className="w-6 h-6 text-white" />
+              </a>
+              <a
+                href={getMapsLink(member)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-12 h-12 rounded-full border-[3px] border-white flex items-center justify-center transition-opacity hover:opacity-90"
+              >
+                <LocationIcon className="w-6 h-6 text-white" />
               </a>
             </div>
 
