@@ -3,7 +3,7 @@ import { Resend } from 'resend';
 import { getCompanyEmail, getBusinessHeadEmail } from '@/lib/company-email-map';
 import { query } from '@/lib/db';
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+function getResend() { return new Resend(process.env.RESEND_API_KEY); }
 
 export async function GET(request: Request) {
   try {
@@ -291,7 +291,7 @@ export async function GET(request: Request) {
         }
 
         // Send reminder email
-        const emailResponse = await resend.emails.send({
+        const emailResponse = await getResend().emails.send({
           from: 'complaints@legendholding.com',
           to: [companyEmail],
           subject: emailSubject,
@@ -409,7 +409,7 @@ export async function GET(request: Request) {
         `;
 
         // Send escalation email to business head
-        const emailResponse = await resend.emails.send({
+        const emailResponse = await getResend().emails.send({
           from: 'complaints@legendholding.com',
           to: [businessHeadEmail],
           subject: emailSubject,
@@ -510,7 +510,7 @@ export async function GET(request: Request) {
           </html>
         `;
 
-        const emailResponse = await resend.emails.send({
+        const emailResponse = await getResend().emails.send({
           from: 'complaints@legendholding.com',
           to: [holdingInboxEmail],
           subject: emailSubject,

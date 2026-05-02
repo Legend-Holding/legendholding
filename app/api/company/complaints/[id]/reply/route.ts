@@ -4,7 +4,7 @@ import { cookies } from 'next/headers';
 import { Resend } from 'resend';
 import { getCompanyEmail } from '@/lib/company-email-map';
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+function getResend() { return new Resend(process.env.RESEND_API_KEY); }
 
 export async function POST(
   request: Request,
@@ -61,7 +61,7 @@ export async function POST(
 
       // Send reply email to customer
       try {
-        const emailResponse = await resend.emails.send({
+        const emailResponse = await getResend().emails.send({
           from: 'complaints@legendholding.com',
           to: [complaint.email],
           replyTo: [companyEmail, 'complaints@legendholding.com'],
