@@ -1,7 +1,12 @@
 import { Resend } from 'resend';
 import { getUserByEmail } from './workflow-users';
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+function getResend(): Resend {
+  if (!process.env.RESEND_API_KEY) {
+    throw new Error('Missing RESEND_API_KEY');
+  }
+  return new Resend(process.env.RESEND_API_KEY);
+}
 
 export async function sendContactFormEmail(data: {
   name: string;
@@ -20,7 +25,7 @@ export async function sendContactFormEmail(data: {
     // Set CONTACT_FORM_RECIPIENT_EMAIL in .env.local or use default
     const recipientEmail = process.env.CONTACT_FORM_RECIPIENT_EMAIL || 'info@legendholding.com';
 
-    const emailResponse = await resend.emails.send({
+    const emailResponse = await getResend().emails.send({
       from: fromEmail,
       to: [recipientEmail],
       replyTo: email, // The sender's email address
@@ -78,7 +83,7 @@ export async function sendApplicationRejectionEmail(data: {
     const fromEmail = 'no-reply@legendholding.com';
     const bannerUrl = 'https://res.cloudinary.com/dzfhqvxnf/image/upload/v1770727232/email-banner_i8poc9.png';
 
-    const emailResponse = await resend.emails.send({
+    const emailResponse = await getResend().emails.send({
       from: fromEmail,
       to: [applicantEmail],
       subject: `Update on your application – Legend Holding Group`,
@@ -134,7 +139,7 @@ export async function sendWorkflowApprovalEmail(data: {
     // Use your verified domain email address
     const fromEmail = 'no-reply@legendholding.com';
 
-    const emailResponse = await resend.emails.send({
+    const emailResponse = await getResend().emails.send({
       from: fromEmail,
       to: [email],
       subject: `Annual Budget Plan Approved: ${subject}`,
@@ -333,7 +338,7 @@ export async function sendWorkflowRejectionEmail(data: {
       ? `https://www.legendholding.com/workflow?id=${user.id}`
       : 'https://www.legendholding.com/workflow';
 
-    const emailResponse = await resend.emails.send({
+    const emailResponse = await getResend().emails.send({
       from: fromEmail,
       to: [email],
       subject: `Annual Budget Plan Update: ${subject}`,
@@ -602,7 +607,7 @@ export async function sendCustomerCareComplaintEmail(data: {
     const safeMessage = escapeHtml(message).replace(/\n/g, '<br>');
     const safeAdminComment = adminComment ? escapeHtml(adminComment).replace(/\n/g, '<br>') : '';
 
-    const emailResponse = await resend.emails.send({
+    const emailResponse = await getResend().emails.send({
       from: fromEmail,
       to: [companyEmail],
       // No replyTo - customers cannot reply to no-reply address
