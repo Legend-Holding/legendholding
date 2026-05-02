@@ -1,14 +1,10 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { query as dbQuery, withTransaction } from '@/lib/db';
 import { sendWorkflowApprovalEmail, sendWorkflowRejectionEmail } from '@/lib/email';
 
 // Route segment config - increase body size limit to 30MB
 export const runtime = 'nodejs';
 export const maxDuration = 30;
-
-// Initialize Supabase client with service role for server-side operations
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 
 export async function POST(request: Request) {
@@ -34,51 +30,28 @@ export async function POST(request: Request) {
       );
     }
 
-    // Files are already uploaded to Supabase Storage, just use the URLs
+    // Files may be pre-uploaded; just use the provided URLs
     const filesData = uploadedFiles || [];
 
-    // Create Supabase client
-    const supabase = createClient(supabaseUrl, supabaseServiceKey, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false
-      }
-    });
-
-    // Insert submission into database
-    const { data, error } = await supabase
-      .from('workflow_submissions')
-      .insert([
-        {
-          name,
-          email,
-          subject,
-          message,
-          files: filesData.length > 0 ? filesData : [],
-          status: 'pending',
-        },
-      ])
-      .select();
-
-    if (error) {
-      console.error('Database error:', error);
-      return NextResponse.json(
-        { error: `Failed to submit workflow document: ${error.message || JSON.stringify(error)}` },
-        { status: 500 }
-      );
-    }
+    const result = await dbQuery(
+      `INSERT INTO workflow_submissions (name, email, subject, message, files, status)
+       VALUES ($1, $2, $3, $4, $5, 'pending')
+       RETURNING *`,
+      [name, email, subject, message, JSON.stringify(filesData.length > 0 ? filesData : [])],
+    );
+    const data = result.rows[0];
 
     return NextResponse.json(
       { 
         message: 'Workflow document submitted successfully',
-        data: data[0]
+        data
       },
       { status: 200 }
     );
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Unexpected error:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to submit workflow document' },
+      { error: error instanceof Error ? error.message : 'Failed to submit workflow document' },
       { status: 500 }
     );
   }
@@ -91,45 +64,24 @@ export async function GET(request: Request) {
     const status = searchParams.get('status');
     const email = searchParams.get('email'); // Filter by user email
 
-    const supabase = createClient(supabaseUrl, supabaseServiceKey, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false
-      }
-    });
-
-    let query = supabase
-      .from('workflow_submissions')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    if (status) {
-      query = query.eq('status', status);
-    }
-
-    // Filter by email if provided (for user-specific submissions)
-    if (email) {
-      query = query.eq('email', email);
-    }
-
-    const { data, error } = await query;
-
-    if (error) {
-      console.error('Database error:', error);
-      return NextResponse.json(
-        { error: 'Failed to fetch workflow submissions' },
-        { status: 500 }
-      );
-    }
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    if (status) { params.push(status); conditions.push(`status = $${params.length}`); }
+    if (email) { params.push(email); conditions.push(`email = $${params.length}`); }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const result = await dbQuery(
+      `SELECT * FROM workflow_submissions ${where} ORDER BY created_at DESC`,
+      params,
+    );
 
     return NextResponse.json(
-      { data },
+      { data: result.rows },
       { status: 200 }
     );
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Unexpected error:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to fetch workflow submissions' },
+      { error: error instanceof Error ? error.message : 'Failed to fetch workflow submissions' },
       { status: 500 }
     );
   }
@@ -157,61 +109,40 @@ export async function PATCH(request: Request) {
       );
     }
 
-    const supabase = createClient(supabaseUrl, supabaseServiceKey, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false
-      }
-    });
-
-    // Prepare update data based on reviewer
-    const updateData: any = { status };
+    // Prepare update fields based on reviewer
+    const setClauses: string[] = ['status = $1'];
+    const params: unknown[] = [status];
     
     if (reviewer === 'finance' && (status === 'finance_approved' || status === 'finance_rejected')) {
-      updateData.finance_reviewed_at = new Date().toISOString();
-      if (comment) updateData.finance_comment = comment;
+      params.push(new Date().toISOString()); setClauses.push(`finance_reviewed_at = $${params.length}`);
+      if (comment) { params.push(comment); setClauses.push(`finance_comment = $${params.length}`); }
     } else if (reviewer === 'cofounder' && (status === 'cofounder_approved' || status === 'cofounder_rejected')) {
-      updateData.cofounder_reviewed_at = new Date().toISOString();
-      if (comment) updateData.cofounder_comment = comment;
+      params.push(new Date().toISOString()); setClauses.push(`cofounder_reviewed_at = $${params.length}`);
+      if (comment) { params.push(comment); setClauses.push(`cofounder_comment = $${params.length}`); }
     } else if (reviewer === 'founder' && (status === 'approved' || status === 'founder_rejected')) {
-      updateData.founder_reviewed_at = new Date().toISOString();
-      if (comment) updateData.founder_comment = comment;
-      // Store both signatures for approval
+      params.push(new Date().toISOString()); setClauses.push(`founder_reviewed_at = $${params.length}`);
+      if (comment) { params.push(comment); setClauses.push(`founder_comment = $${params.length}`); }
       if (status === 'approved') {
-        if (submitterSignature) updateData.submitter_signature = submitterSignature;
-        if (founderSignature) updateData.founder_signature = founderSignature;
+        if (submitterSignature) { params.push(submitterSignature); setClauses.push(`submitter_signature = $${params.length}`); }
+        if (founderSignature) { params.push(founderSignature); setClauses.push(`founder_signature = $${params.length}`); }
       }
     }
 
-    // First, fetch the submission to get submitter details for email
-    const { data: submissionData, error: fetchError } = await supabase
-      .from('workflow_submissions')
-      .select('name, email, subject, finance_comment, cofounder_comment, founder_comment')
-      .eq('id', id)
-      .single();
+    params.push(id);
+    const idParam = `$${params.length}`;
 
-    if (fetchError) {
-      console.error('Error fetching submission:', fetchError);
-      return NextResponse.json(
-        { error: 'Failed to fetch workflow submission' },
-        { status: 500 }
-      );
-    }
+    const fetchRes = await dbQuery(
+      `SELECT name, email, subject FROM workflow_submissions WHERE id = $1 LIMIT 1`,
+      [id],
+    );
+    const submissionData = fetchRes.rows[0];
+    if (!submissionData) return NextResponse.json({ error: 'Submission not found' }, { status: 404 });
 
-    // Update the submission
-    const { data, error } = await supabase
-      .from('workflow_submissions')
-      .update(updateData)
-      .eq('id', id)
-      .select();
-
-    if (error) {
-      console.error('Database error:', error);
-      return NextResponse.json(
-        { error: 'Failed to update workflow submission' },
-        { status: 500 }
-      );
-    }
+    const updateRes = await dbQuery(
+      `UPDATE workflow_submissions SET ${setClauses.join(', ')} WHERE id = ${idParam} RETURNING *`,
+      params,
+    );
+    const data = updateRes.rows[0];
 
     // Send email notifications based on status
     try {
@@ -247,14 +178,14 @@ export async function PATCH(request: Request) {
     return NextResponse.json(
       { 
         message: 'Workflow submission updated successfully',
-        data: data[0]
+        data
       },
       { status: 200 }
     );
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Unexpected error:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to update workflow submission' },
+      { error: error instanceof Error ? error.message : 'Failed to update workflow submission' },
       { status: 500 }
     );
   }
@@ -274,29 +205,15 @@ export async function DELETE(request: Request) {
       );
     }
 
-    const supabase = createClient(supabaseUrl, supabaseServiceKey, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false
-      }
-    });
-
-    // If email is provided, validate ownership before deleting
     if (email) {
-      const { data: submission, error: fetchError } = await supabase
-        .from('workflow_submissions')
-        .select('email')
-        .eq('id', id)
-        .single();
-
-      if (fetchError) {
-        console.error('Error fetching submission:', fetchError);
-        return NextResponse.json(
-          { error: 'Submission not found' },
-          { status: 404 }
-        );
+      const subRes = await dbQuery(
+        `SELECT email FROM workflow_submissions WHERE id = $1 LIMIT 1`,
+        [id],
+      );
+      const submission = subRes.rows[0];
+      if (!submission) {
+        return NextResponse.json({ error: 'Submission not found' }, { status: 404 });
       }
-
       if (submission.email !== email) {
         return NextResponse.json(
           { error: 'You can only delete your own submissions' },
@@ -305,63 +222,16 @@ export async function DELETE(request: Request) {
       }
     }
 
-    // Delete files from storage if they exist
-    const { data: submissionData } = await supabase
-      .from('workflow_submissions')
-      .select('files')
-      .eq('id', id)
-      .single();
-
-    if (submissionData?.files && Array.isArray(submissionData.files)) {
-      // Delete files from Supabase Storage
-      for (const file of submissionData.files) {
-        if (file.fileUrl) {
-          try {
-            // Extract file path from URL
-            // URL format: https://[project].supabase.co/storage/v1/object/public/workflow-documents/workflow/[filename]
-            const urlParts = file.fileUrl.split('/workflow-documents/');
-            if (urlParts.length > 1) {
-              // The path after /workflow-documents/ is the file path in storage
-              const filePath = urlParts[1];
-              const { error: storageError } = await supabase.storage
-                .from('workflow-documents')
-                .remove([filePath]);
-              
-              if (storageError) {
-                console.error('Error deleting file from storage:', storageError);
-                // Continue with database deletion even if file deletion fails
-              }
-            }
-          } catch (storageError) {
-            console.error('Error deleting file from storage:', storageError);
-            // Continue with database deletion even if file deletion fails
-          }
-        }
-      }
-    }
-
-    // Delete submission from database
-    const { error } = await supabase
-      .from('workflow_submissions')
-      .delete()
-      .eq('id', id);
-
-    if (error) {
-      console.error('Database error:', error);
-      return NextResponse.json(
-        { error: 'Failed to delete workflow submission' },
-        { status: 500 }
-      );
-    }
+    await dbQuery(`DELETE FROM workflow_submissions WHERE id = $1`, [id]);
 
     return NextResponse.json(
       { message: 'Workflow submission deleted successfully' },
       { status: 200 }
     );
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Unexpected error:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to delete workflow submission' },
+      { error: error instanceof Error ? error.message : 'Failed to delete workflow submission' },
       { status: 500 }
     );
   }

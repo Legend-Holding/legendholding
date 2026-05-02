@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { query } from '@/lib/db';
 import { cookies } from 'next/headers';
 import { Resend } from 'resend';
 import { getCompanyEmail } from '@/lib/company-email-map';
@@ -11,94 +11,53 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    if (!process.env.SUPABASE_SERVICE_ROLE_KEY || !process.env.NEXT_PUBLIC_SUPABASE_URL) {
-      return NextResponse.json({ error: 'Server configuration error' }, { status: 500 });
-    }
-
     if (!process.env.RESEND_API_KEY) {
       return NextResponse.json({ error: 'Email service not configured' }, { status: 500 });
     }
 
-    // Await params in Next.js 15
     const { id } = await params;
 
     const cookieStore = await cookies();
     const sessionToken = cookieStore.get('company_session')?.value;
+    if (!sessionToken) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    if (!sessionToken) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const decoded = Buffer.from(sessionToken, 'base64').toString('utf-8');
+    const [companyId] = decoded.split(':');
+
+    const companyRes = await query(
+      `SELECT company_name FROM company_credentials WHERE id = $1 LIMIT 1`,
+      [companyId],
+    );
+    const company = companyRes.rows[0];
+    if (!company) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    const complaintRes = await query(
+      `SELECT * FROM customer_care_complaints WHERE id = $1 AND company = $2 LIMIT 1`,
+      [id, company.company_name],
+    );
+    const complaint = complaintRes.rows[0];
+    if (!complaint) return NextResponse.json({ error: 'Complaint not found or access denied' }, { status: 404 });
+
+    if (complaint.status !== 'reviewed') {
+      return NextResponse.json(
+        { error: 'Complaint must be reviewed before sending reply' },
+        { status: 400 },
+      );
     }
 
-    // Verify company session
-    try {
-      const decoded = Buffer.from(sessionToken, 'base64').toString('utf-8');
-      const [companyId] = decoded.split(':');
+    const body = await request.json();
+    const { replyMessage } = body;
+    if (!replyMessage || !replyMessage.trim()) {
+      return NextResponse.json({ error: 'Reply message is required' }, { status: 400 });
+    }
 
-      // Create Supabase client
-      const supabase = createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL,
-        process.env.SUPABASE_SERVICE_ROLE_KEY,
-        {
-          auth: {
-            autoRefreshToken: false,
-            persistSession: false
-          }
-        }
+    const companyEmail = getCompanyEmail(complaint.company);
+    if (!companyEmail) {
+      return NextResponse.json(
+        { error: `No email address configured for company: ${complaint.company}` },
+        { status: 400 },
       );
-
-      // Verify company exists
-      const { data: company, error: companyError } = await supabase
-        .from('company_credentials')
-        .select('company_name')
-        .eq('id', companyId)
-        .single();
-
-      if (companyError || !company) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-
-      // Get complaint and verify it belongs to this company
-      const { data: complaint, error: complaintError } = await supabase
-        .from('customer_care_complaints')
-        .select('*')
-        .eq('id', id)
-        .eq('company', company.company_name)
-        .single();
-
-      if (complaintError || !complaint) {
-        return NextResponse.json(
-          { error: 'Complaint not found or access denied' },
-          { status: 404 }
-        );
-      }
-
-      // Verify complaint status is 'reviewed'
-      if (complaint.status !== 'reviewed') {
-        return NextResponse.json(
-          { error: 'Complaint must be reviewed before sending reply' },
-          { status: 400 }
-        );
-      }
-
-      // Get request body
-      const body = await request.json();
-      const { replyMessage } = body;
-
-      if (!replyMessage || !replyMessage.trim()) {
-        return NextResponse.json(
-          { error: 'Reply message is required' },
-          { status: 400 }
-        );
-      }
-
-      // Get company email for Reply-To
-      const companyEmail = getCompanyEmail(complaint.company);
-      if (!companyEmail) {
-        return NextResponse.json(
-          { error: `No email address configured for company: ${complaint.company}` },
-          { status: 400 }
-        );
-      }
+    }
 
       // Send reply email to customer
       try {
@@ -196,35 +155,27 @@ export async function POST(
         }
 
         // Update complaint status to 'replied' and save the reply message
-        const { error: updateError } = await supabase
-          .from('customer_care_complaints')
-          .update({ status: 'replied', company_reply: replyMessage.trim() })
-          .eq('id', id);
-
-        if (updateError) {
-          console.error('Error updating complaint status:', updateError);
-          // Don't fail the request if update fails, email was sent
-        }
+        await query(
+          `UPDATE customer_care_complaints SET status = 'replied', company_reply = $1 WHERE id = $2`,
+          [replyMessage.trim(), id],
+        );
 
         return NextResponse.json(
           { success: true, message: 'Reply sent successfully' },
-          { status: 200 }
+          { status: 200 },
         );
-      } catch (emailError: any) {
+      } catch (emailError: unknown) {
         console.error('Error sending reply email:', emailError);
         return NextResponse.json(
-          { error: `Failed to send reply email: ${emailError.message || 'Unknown error'}` },
-          { status: 500 }
+          { error: `Failed to send reply email: ${emailError instanceof Error ? emailError.message : 'Unknown error'}` },
+          { status: 500 },
         );
       }
-    } catch (decodeError) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error sending company reply:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to send reply' },
-      { status: 500 }
+      { error: error instanceof Error ? error.message : 'Failed to send reply' },
+      { status: 500 },
     );
   }
 }

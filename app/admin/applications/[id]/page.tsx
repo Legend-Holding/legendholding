@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
 import { useParams, useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -54,7 +53,6 @@ export default function ApplicationDetails() {
   const [application, setApplication] = useState<JobApplication | null>(null)
   const [loading, setLoading] = useState(true)
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false)
-  const supabase = createClientComponentClient()
 
   useEffect(() => {
     if (!applicationId) return
@@ -63,16 +61,11 @@ export default function ApplicationDetails() {
 
   const fetchApplicationDetails = async () => {
     try {
-      const { data: applicationData, error: applicationError } = await supabase
-        .from('job_applications')
-        .select(`
-          *,
-          job:jobs(id, title, department)
-        `)
-        .eq('id', applicationId)
-        .single()
+      const response = await fetch(`/api/admin/applications/${applicationId}`)
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || 'Failed to load application')
 
-      if (applicationError) throw applicationError
+      const applicationData = data.application
 
       if (!applicationData) {
         setApplication(null)
@@ -137,26 +130,9 @@ export default function ApplicationDetails() {
     if (!application || !confirm('Are you sure you want to delete this application? This action cannot be undone.')) return
 
     try {
-      // First delete the resume from storage
-      const resumeFileName = application.resume_url.split('/').pop()
-      if (resumeFileName) {
-        const { error: storageError } = await supabase
-          .storage
-          .from('resumes')
-          .remove([`public/${resumeFileName}`])
-
-        if (storageError) {
-          console.error('Error deleting resume file:', storageError)
-        }
-      }
-
-      // Then delete the application record
-      const { error } = await supabase
-        .from('job_applications')
-        .delete()
-        .eq('id', application.id)
-
-      if (error) throw error
+      const response = await fetch(`/api/admin/applications/${application.id}`, { method: 'DELETE' })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || 'Failed to delete application')
 
       toast.success('Application deleted successfully')
       router.push('/admin/applications')
@@ -391,39 +367,9 @@ export default function ApplicationDetails() {
         return;
       }
       
-      // For storage paths, try public URL approach
-      let filePath = application.resume_url;
-      if (filePath.startsWith('/')) {
-        filePath = filePath.substring(1);
-      }
-      
-      console.log('Processed file path:', filePath);
-      
-      // Try getting public URL from resumes bucket
-      const { data: publicUrlData } = supabase.storage
-        .from('resumes')
-        .getPublicUrl(filePath);
-      
-      if (publicUrlData?.publicUrl) {
-        console.log('Public URL:', publicUrlData.publicUrl);
-        window.open(publicUrlData.publicUrl, '_blank');
-        toast.success('Resume opened in new tab');
-        return;
-      }
-      
-      // Try getting public URL from applications bucket
-      const { data: publicUrlData2 } = supabase.storage
-        .from('applications')
-        .getPublicUrl(filePath);
-      
-      if (publicUrlData2?.publicUrl) {
-        console.log('Public URL from applications:', publicUrlData2.publicUrl);
-        window.open(publicUrlData2.publicUrl, '_blank');
-        toast.success('Resume opened in new tab');
-        return;
-      }
-      
-      throw new Error('Unable to generate preview URL');
+      window.open(application.resume_url, '_blank');
+      toast.success('Resume opened in new tab');
+      return;
       
     } catch (error) {
       console.error('Error previewing resume:', error);

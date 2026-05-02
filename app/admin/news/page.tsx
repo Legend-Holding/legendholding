@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
 import { useRouter } from "next/navigation"
 import { AdminDashboardLayout } from "@/components/admin/dashboard-layout"
 import { Button } from "@/components/ui/button"
@@ -27,7 +26,6 @@ import {
 } from "@/components/ui/table"
 import { toast } from "sonner"
 import { Edit2, Trash2, Plus } from "lucide-react"
-import { getNextArticleSlug } from "@/lib/news-slug"
 // TinyMCE removed - using simple textarea with bold support
 
 interface NewsArticleImage {
@@ -90,7 +88,6 @@ export default function NewsManagement() {
   const [totalPages, setTotalPages] = useState(1)
   const articlesPerPage = 10
   const router = useRouter()
-  const supabase = createClientComponentClient()
 
   useEffect(() => {
     fetchArticles()
@@ -156,26 +153,10 @@ export default function NewsManagement() {
   // Add new article
   const handleAdd = async () => {
     try {
-      // If this article is being set as featured, uncheck all other articles first
-      if (formData.is_featured) {
-        const { error: uncheckError } = await supabase
-          .from("news_articles")
-          .update({ is_featured: false })
-
-        if (uncheckError) throw uncheckError
-      }
-
-      // Convert minutes to read_time format
       const read_time = `${formData.read_time_minutes} ${formData.read_time_minutes === 1 ? 'Minute' : 'Minutes'}`
-      
-      // Next article number: article-1, article-2, ...
-      const { data: existingSlugs } = await supabase.from("news_articles").select("slug")
-      const slug = getNextArticleSlug((existingSlugs || []).map((r) => r.slug))
-      
-      // Prepare article data (excluding images)
+
       const articleData = {
         title: formData.title,
-        slug,
         excerpt: formData.excerpt,
         content: formData.content,
         image_url: formData.images[0]?.image_url || "", // Keep first image for backward compatibility
@@ -190,41 +171,14 @@ export default function NewsManagement() {
         read_time
       }
 
-      // Insert the article
-      const { data: newArticle, error } = await supabase
-        .from("news_articles")
-        .insert([articleData])
-        .select()
-        .single()
-
-      if (error) throw error
-
-      // Insert images into news_article_images table
-      if (formData.images.length > 0) {
-        const imageData = formData.images
-          .filter(image => image.image_url.trim() !== "") // Only save images with URLs
-          .map((image, index) => ({
-            article_id: newArticle.id,
-            image_url: image.image_url,
-            image_order: index + 1,
-            image_type: image.image_type,
-            alt_text: image.alt_text || null,
-            caption: image.caption || null
-          }))
-
-        console.log("Saving images for new article:", imageData)
-        
-        if (imageData.length > 0) {
-          const { error: imageError } = await supabase
-            .from("news_article_images")
-            .insert(imageData)
-
-          if (imageError) {
-            console.error("Error saving images:", imageError)
-            throw imageError
-          }
-          console.log("Images saved successfully")
-        }
+      const res = await fetch(`/api/admin/news`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(articleData),
+      })
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}))
+        throw new Error(errBody.error || "Failed to add article")
       }
 
       // Refresh the articles list to get the complete data with images
@@ -265,12 +219,7 @@ export default function NewsManagement() {
 
     try {
       const read_time = `${formData.read_time_minutes} ${formData.read_time_minutes === 1 ? 'Minute' : 'Minutes'}`
-
-      let slug = editingArticle.slug?.trim() || null
-      if (!slug) {
-        const { data: existingSlugs } = await supabase.from("news_articles").select("slug")
-        slug = getNextArticleSlug((existingSlugs || []).map((r) => r.slug))
-      }
+      const slug = editingArticle.slug?.trim() || null
 
       const articleData = {
         title: formData.title,
@@ -292,41 +241,12 @@ export default function NewsManagement() {
       const res = await fetch(`/api/admin/news/${editingArticle.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(articleData),
+        body: JSON.stringify({ ...articleData, images: formData.images }),
       })
 
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}))
         throw new Error(errBody.error || "Failed to update article")
-      }
-
-      // Delete existing images then re-insert
-      const { error: deleteError } = await supabase
-        .from("news_article_images")
-        .delete()
-        .eq("article_id", editingArticle.id)
-
-      if (deleteError) throw deleteError
-
-      if (formData.images.length > 0) {
-        const imageData = formData.images
-          .filter(image => image.image_url.trim() !== "")
-          .map((image, index) => ({
-            article_id: editingArticle.id,
-            image_url: image.image_url,
-            image_order: index + 1,
-            image_type: image.image_type,
-            alt_text: image.alt_text || null,
-            caption: image.caption || null
-          }))
-
-        if (imageData.length > 0) {
-          const { error: imageError } = await supabase
-            .from("news_article_images")
-            .insert(imageData)
-
-          if (imageError) throw imageError
-        }
       }
 
       await fetchArticles()

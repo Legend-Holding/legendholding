@@ -19,7 +19,6 @@ import {
 } from "lucide-react"
 import Image from "next/image"
 import Link from "next/link"
-import { supabase } from "@/lib/supabaseClient"
 import { cn } from "@/lib/utils"
 
 import { Button } from "@/components/ui/button"
@@ -114,40 +113,18 @@ export function NewsPage() {
   const fetchArticlesWithRetry = async (retries = 3, delay = 1000) => {
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
-        // Check if supabase client is properly configured
-        if (!supabase) {
-          console.error("Supabase client is not configured")
-          return
-        }
-        
-        // Fetch all published articles ordered by publication date (newest first)
-        const { data: allArticlesData, error: articlesError } = await supabase!
-          .from("news_articles")
-          .select("*")
-          .eq("published", true)
-          .order("publication_date", { ascending: false })
-
-        if (articlesError) {
-          // If it's a network error and we have retries left, retry
-          if ((articlesError.message.includes('fetch') || articlesError.message.includes('network') || articlesError.message.includes('timeout')) && attempt < retries) {
-            console.warn(`Attempt ${attempt} failed, retrying in ${delay}ms:`, {
-              message: articlesError.message,
-              code: articlesError.code
-            })
+        const response = await fetch('/api/news')
+        if (!response.ok) {
+          if (attempt < retries) {
             await new Promise(resolve => setTimeout(resolve, delay))
-            delay *= 2 // Exponential backoff
+            delay *= 2
             continue
           }
-          
-          console.error("Error fetching articles:", {
-            message: articlesError.message,
-            code: articlesError.code,
-            details: articlesError.details,
-            hint: articlesError.hint,
-            attempt: attempt
-          })
-          throw articlesError
+          throw new Error('Failed to fetch articles')
         }
+
+        const payload = await response.json()
+        const allArticlesData = payload.articles || []
 
         return allArticlesData || []
         
@@ -178,37 +155,7 @@ export function NewsPage() {
         return
       }
 
-      // Fetch images for all articles
-      const articlesWithImages = await Promise.all(
-        allArticles.map(async (article) => {
-          try {
-            const { data: imagesData, error: imagesError } = await supabase!
-              .from("news_article_images")
-              .select("*")
-              .eq("article_id", article.id)
-              .order("image_order", { ascending: true })
-
-            if (imagesError) {
-              // Check if table doesn't exist (common error code: PGRST116)
-              if (imagesError.code === 'PGRST116' || imagesError.message?.includes('does not exist')) {
-                console.warn("news_article_images table not found. Please run the database migration.")
-                return { ...article, images: [] }
-              }
-              console.error("Error fetching images for article:", article.id, {
-                message: imagesError.message,
-                code: imagesError.code,
-                details: imagesError.details
-              })
-              return { ...article, images: [] }
-            }
-
-            return { ...article, images: imagesData || [] }
-          } catch (error) {
-            console.warn("Failed to fetch images for article (table may not exist yet):", article.id)
-            return { ...article, images: [] }
-          }
-        })
-      )
+      const articlesWithImages = allArticles
 
       // Set the manually selected featured article, or the latest one if none is featured
       const featuredArticles = articlesWithImages.filter(article => article.is_featured)

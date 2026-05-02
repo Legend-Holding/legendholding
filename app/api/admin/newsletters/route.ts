@@ -1,17 +1,13 @@
 import { NextResponse } from "next/server"
-import { supabase } from "@/lib/supabase"
+import { query } from "@/lib/db"
 
 // GET /api/admin/newsletters
 export async function GET() {
   try {
-    const { data, error } = await supabase
-      .from('newsletter_subscriptions')
-      .select('*')
-      .order('created_at', { ascending: false })
-
-    if (error) throw error
-
-    return NextResponse.json(data)
+    const result = await query(
+      `SELECT * FROM newsletter_subscriptions ORDER BY created_at DESC`,
+    )
+    return NextResponse.json(result.rows)
   } catch (error) {
     console.error("Error fetching newsletter subscriptions:", error)
     return NextResponse.json(
@@ -26,29 +22,22 @@ export async function POST(req: Request) {
   try {
     const { email } = await req.json()
 
-    // Check if email already exists
-    const { data: existingSubscription } = await supabase
-      .from('newsletter_subscriptions')
-      .select('id')
-      .eq('email', email)
-      .single()
-
-    if (existingSubscription) {
+    const existing = await query(
+      `SELECT id FROM newsletter_subscriptions WHERE email = $1 LIMIT 1`,
+      [email],
+    )
+    if (existing.rows.length > 0) {
       return NextResponse.json(
         { error: "Email already subscribed" },
         { status: 400 }
       )
     }
 
-    const { data, error } = await supabase
-      .from('newsletter_subscriptions')
-      .insert([{ email, status: 'active' }])
-      .select()
-      .single()
-
-    if (error) throw error
-
-    return NextResponse.json(data)
+    const result = await query(
+      `INSERT INTO newsletter_subscriptions (email, status) VALUES ($1, 'active') RETURNING *`,
+      [email],
+    )
+    return NextResponse.json(result.rows[0])
   } catch (error) {
     console.error("Error creating newsletter subscription:", error)
     return NextResponse.json(
@@ -56,4 +45,7 @@ export async function POST(req: Request) {
       { status: 500 }
     )
   }
-} 
+}
+
+
+// GET /api/admin/newsletters

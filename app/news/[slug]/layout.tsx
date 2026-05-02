@@ -1,5 +1,5 @@
 import { Metadata } from 'next';
-import { supabase } from '@/lib/supabase';
+import { query } from '@/lib/db';
 import { generatePageMetadata } from '@/config/metadata';
 import { isNewsIdParam } from '@/lib/news-slug';
 
@@ -30,11 +30,14 @@ export async function generateMetadata(
 
   try {
     const isId = isNewsIdParam(slug);
-    const baseQuery = supabase
-      .from('news_articles')
-      .select('title, excerpt, image_url, category, author, seo_title, seo_description, seo_keywords, seo_image_url')
-      .eq('published', true);
-    const { data: article } = await (isId ? baseQuery.eq('id', slug) : baseQuery.eq('slug', slug)).maybeSingle();
+    const result = await query<NewsArticle>(
+      `SELECT title, excerpt, image_url, category, author, seo_title, seo_description, seo_keywords, seo_image_url
+       FROM news_articles
+       WHERE published = true AND ${isId ? 'id = $1' : 'slug = $1'}
+       LIMIT 1`,
+      [slug],
+    );
+    const article = result.rows[0];
 
     if (!article) {
       return generatePageMetadata({

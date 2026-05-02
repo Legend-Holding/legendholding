@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { useRouter } from "next/navigation";
 import { AdminDashboardLayout } from "@/components/admin/dashboard-layout";
 import { Button } from "@/components/ui/button";
@@ -87,7 +86,6 @@ export default function TeamMembersPage() {
   const [saving, setSaving] = useState(false);
   const [filterCategory, setFilterCategory] = useState<string>("all");
   const router = useRouter();
-  const supabase = createClientComponentClient();
 
   const fetchMembers = async () => {
     try {

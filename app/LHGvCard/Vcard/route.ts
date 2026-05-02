@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { query } from "@/lib/db";
 
 /**
  * Legacy QR redirect handler.
@@ -35,22 +35,11 @@ export async function GET(request: Request) {
     return NextResponse.redirect(`${baseUrl}/`, 302);
   }
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!supabaseUrl || !serviceKey) {
-    return NextResponse.redirect(`${baseUrl}/`, 302);
-  }
-
-  const supabase = createClient(supabaseUrl, serviceKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-
-  const { data } = await supabase
-    .from("management_profiles")
-    .select("slug")
-    .ilike("legacy_slug", legacySlug)
-    .limit(1)
-    .maybeSingle();
+  const result = await query(
+    `SELECT slug FROM management_profiles WHERE legacy_slug ILIKE $1 LIMIT 1`,
+    [legacySlug],
+  );
+  const data = result.rows[0];
 
   if (data?.slug) {
     return NextResponse.redirect(`${baseUrl}/profile/${data.slug}`, 301);

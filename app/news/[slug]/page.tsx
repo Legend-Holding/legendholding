@@ -1,7 +1,6 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
 import { useParams } from "next/navigation"
 import Image from "next/image"
 import Link from "next/link"
@@ -116,7 +115,6 @@ export default function NewsArticlePage() {
   const [isImagePreviewOpen, setIsImagePreviewOpen] = useState(false)
   const [activeImageIndex, setActiveImageIndex] = useState(0)
   const params = useParams()
-  const supabase = createClientComponentClient()
 
   const allImages = useMemo(() => {
     if (!article) return []
@@ -305,21 +303,10 @@ export default function NewsArticlePage() {
 
   const fetchLatestArticles = async (excludeId?: string) => {
     try {
-      let query = supabase
-        .from("news_articles")
-        .select("*")
-        .eq("published", true)
-        .order("created_at", { ascending: false })
-
-      // Exclude the current article if an ID is provided
-      if (excludeId) {
-        query = query.neq("id", excludeId)
-      }
-
-      const { data, error } = await query.limit(5)
-
-      if (error) throw error
-      setLatestArticles(data || [])
+      const response = await fetch(`/api/news?limit=5${excludeId ? `&excludeId=${excludeId}` : ''}`)
+      if (!response.ok) throw new Error("Failed to fetch latest articles")
+      const payload = await response.json()
+      setLatestArticles(payload.articles || [])
     } catch (error) {
       console.error("Error fetching latest articles:", error)
     }
@@ -328,64 +315,33 @@ export default function NewsArticlePage() {
   const fetchArticle = async () => {
     if (!params?.slug) return
     const slugParam = params.slug as string
-    const isId = isNewsIdParam(slugParam)
 
     try {
-      // Fetch the current article by slug or legacy id (maybeSingle = no throw when 0 rows)
-      const { data: articleData, error: articleError } = await supabase
-        .from("news_articles")
-        .select("*")
-        .eq(isId ? "id" : "slug", slugParam)
-        .maybeSingle()
-
-      if (articleError) {
-        console.error("Error fetching article:", articleError.message || articleError.code, articleError)
-        throw articleError
+      const response = await fetch(`/api/news/${slugParam}`)
+      if (!response.ok) {
+        setArticle(null)
+        setLoading(false)
+        return
       }
+      const payload = await response.json()
+      const articleData = payload.article
       if (!articleData) {
         setArticle(null)
         setLoading(false)
         return
       }
 
-      // Fetch images for the article
-      let imagesData = []
-      try {
-        const { data: fetchedImages, error: imagesError } = await supabase
-          .from("news_article_images")
-          .select("*")
-          .eq("article_id", articleData.id)
-          .order("image_order", { ascending: true })
-
-        if (imagesError) {
-          // Check if table doesn't exist (common error code: PGRST116)
-          if (imagesError.code === 'PGRST116' || imagesError.message?.includes('does not exist')) {
-            console.warn("news_article_images table not found. Please run the database migration.")
-          } else {
-            console.error("Error fetching images:", imagesError)
-          }
-        } else {
-          imagesData = fetchedImages || []
-        }
-      } catch (error) {
-        console.warn("Failed to fetch images (table may not exist yet)")
-      }
-
-      setArticle({ ...articleData, images: imagesData })
+      setArticle(articleData)
 
       // Fetch related articles from the same category
       if (articleData) {
-        const { data: relatedData, error: relatedError } = await supabase
-          .from("news_articles")
-          .select("*")
-          .eq("category", articleData.category)
-          .neq("id", articleData.id)
-          .eq("published", true)
-          .order("created_at", { ascending: false })
-          .limit(3)
-
-        if (relatedError) throw relatedError
-        setRelatedArticles(relatedData || [])
+        const relatedResponse = await fetch(
+          `/api/news?limit=3&category=${encodeURIComponent(articleData.category)}&excludeId=${articleData.id}`,
+        )
+        if (relatedResponse.ok) {
+          const relatedPayload = await relatedResponse.json()
+          setRelatedArticles(relatedPayload.articles || [])
+        }
       }
 
       // Fetch latest articles excluding the current article

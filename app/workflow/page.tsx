@@ -2,7 +2,6 @@
 
 import type React from "react"
 import { useState, useRef, useEffect, Suspense } from "react"
-import { useSearchParams } from "next/navigation"
 import { motion } from "framer-motion"
 import {
   FileText,
@@ -16,7 +15,6 @@ import {
   Loader2,
 } from "lucide-react"
 import { toast } from "sonner"
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
 import { getUserById } from '@/lib/workflow-users'
 import { Badge } from "@/components/ui/badge"
 import {
@@ -38,7 +36,6 @@ import {
 } from "@/components/ui/alert-dialog"
 
 function WorkflowForm() {
-  const searchParams = useSearchParams()
   const [userInfo, setUserInfo] = useState({
     name: "",
     email: "",
@@ -80,7 +77,7 @@ function WorkflowForm() {
 
   // Get user info from URL parameter (id)
   useEffect(() => {
-    const userId = searchParams.get('id') || ''
+    const userId = new URLSearchParams(window.location.search).get('id') || ''
     
     if (!userId) {
       setHasValidId(false)
@@ -100,7 +97,7 @@ function WorkflowForm() {
       department: user.department,
     })
     setHasValidId(true)
-  }, [searchParams])
+  }, [])
 
   // Fetch user submissions when email is available
   useEffect(() => {
@@ -142,9 +139,7 @@ function WorkflowForm() {
     const files = Array.from(e.target.files || [])
     if (files.length === 0) return
 
-    const supabase = createClientComponentClient()
-
-    // Validate and upload each file immediately
+    // Validate and convert each file to base64 for DB storage
     for (const file of files) {
       // Validate file type
       if (!allowedFileTypes.includes(file.type)) {
@@ -152,10 +147,10 @@ function WorkflowForm() {
         continue
       }
 
-      // Validate file size (max 100MB)
-      const maxSize = 100 * 1024 * 1024 // 100MB
+      // Base64 payloads should stay reasonably small
+      const maxSize = 10 * 1024 * 1024 // 10MB
       if (file.size > maxSize) {
-        toast.error(`${file.name}: File size must be less than 100MB`)
+        toast.error(`${file.name}: File size must be less than 10MB`)
         continue
       }
 
@@ -172,67 +167,28 @@ function WorkflowForm() {
       }])
 
       try {
-        // Generate unique filename with timestamp
-        const timestamp = Date.now()
-        const randomString = Math.random().toString(36).substring(2, 15)
-        const fileExtension = file.name.split('.').pop()
-        const storagePath = `workflow/${timestamp}-${randomString}.${fileExtension}`
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(String(reader.result || ""))
+          reader.onerror = () => reject(new Error("Failed to read file"))
+          reader.readAsDataURL(file)
+        })
 
-        // Simulate smooth progress updates during upload
-        const progressInterval = setInterval(() => {
-          setUploadedFiles(prev => prev.map(f => {
-            if (f.file === file && f.uploadProgress < 90) {
-              // Gradually increase progress up to 90%
-              const increment = Math.random() * 15 + 5 // Random increment between 5-20%
-              return { ...f, uploadProgress: Math.round(Math.min(90, f.uploadProgress + increment)) }
-            }
-            return f
-          }))
-        }, 300) // Update every 300ms
+        setUploadedFiles(prev => prev.map(f =>
+          f.file === file
+            ? {
+                ...f,
+                fileUrl: base64,
+                uploadProgress: 100,
+                isUploading: false,
+              }
+            : f
+        ))
 
-        try {
-          // Upload to Supabase Storage
-          const { data: uploadData, error: uploadError } = await supabase.storage
-            .from('workflow-documents')
-            .upload(storagePath, file, {
-              cacheControl: '3600',
-              upsert: false,
-              contentType: file.type || 'application/octet-stream'
-            })
-
-          // Clear progress interval
-          clearInterval(progressInterval)
-
-          if (uploadError) {
-            throw new Error(uploadError.message)
-          }
-
-          // Get public URL
-          const { data: urlData } = supabase.storage
-            .from('workflow-documents')
-            .getPublicUrl(storagePath)
-
-          // Update file state with uploaded URL and complete progress
-          setUploadedFiles(prev => prev.map(f => 
-            f.file === file 
-              ? {
-                  ...f,
-                  fileUrl: urlData.publicUrl,
-                  uploadProgress: 100,
-                  isUploading: false,
-                  storagePath
-                }
-              : f
-          ))
-
-          toast.success(`${file.name} uploaded successfully`)
-        } catch (uploadError) {
-          clearInterval(progressInterval)
-          throw uploadError
-        }
+        toast.success(`${file.name} attached successfully`)
       } catch (error: any) {
-        console.error(`Error uploading ${file.name}:`, error)
-        toast.error(`Failed to upload ${file.name}: ${error.message}`)
+        console.error(`Error processing ${file.name}:`, error)
+        toast.error(`Failed to process ${file.name}: ${error.message}`)
         // Remove failed file from state
         setUploadedFiles(prev => prev.filter(f => f.file !== file))
       }
@@ -245,25 +201,6 @@ function WorkflowForm() {
   }
 
   const handleRemoveFile = async (index: number) => {
-    const fileToRemove = uploadedFiles[index]
-    
-    // If file was uploaded, delete it from storage
-    if (fileToRemove.storagePath && fileToRemove.fileUrl) {
-      try {
-        const supabase = createClientComponentClient()
-        const { error } = await supabase.storage
-          .from('workflow-documents')
-          .remove([fileToRemove.storagePath])
-        
-        if (error) {
-          console.error('Error deleting file from storage:', error)
-          // Still remove from UI even if storage deletion fails
-        }
-      } catch (error) {
-        console.error('Error deleting file:', error)
-      }
-    }
-    
     setUploadedFiles(prev => prev.filter((_, i) => i !== index))
     toast.success('File removed')
   }

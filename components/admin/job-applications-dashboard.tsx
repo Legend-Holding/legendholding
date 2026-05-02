@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -44,7 +43,6 @@ interface JobApplicationsDashboardProps {
 }
 
 export function JobApplicationsDashboard({ onSignOut, showHeader = true }: JobApplicationsDashboardProps) {
-  const supabase = createClientComponentClient()
   const [applications, setApplications] = useState<JobApplication[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -87,48 +85,18 @@ export function JobApplicationsDashboard({ onSignOut, showHeader = true }: JobAp
   const fetchApplications = async () => {
     try {
       setLoading(true)
-      // Fetch recent applications and counts in parallel for performance
-      const [
-        appsRes,
-        totalRes,
-        pendingRes,
-        reviewedRes,
-        shortlistedRes,
-        rejectedRes,
-        hiredRes
-      ] = await Promise.all([
-        supabase
-          .from('job_applications')
-          .select(`
-            id, job_id, full_name, email, phone, status, created_at,
-            job:jobs(title, department)
-          `)
-          .order('created_at', { ascending: false })
-          .limit(50),
-        supabase.from('job_applications').select('id', { count: 'exact', head: true }).neq('status', 'rejected'),
-        supabase.from('job_applications').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
-        supabase.from('job_applications').select('id', { count: 'exact', head: true }).eq('status', 'reviewed'),
-        supabase.from('job_applications').select('id', { count: 'exact', head: true }).eq('status', 'shortlisted'),
-        supabase.from('job_applications').select('id', { count: 'exact', head: true }).eq('status', 'rejected'),
-        supabase.from('job_applications').select('id', { count: 'exact', head: true }).eq('status', 'hired')
-      ])
+      const response = await fetch('/api/admin/applications?page=1&pageSize=50&status=all&job=all', { cache: 'no-store' })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || 'Failed to fetch applications')
 
-      if (appsRes.error) throw appsRes.error
-
-      const processedData = (appsRes.data || []).map(app => ({
-        ...app,
-        status: (app as any).status || 'pending'
-      }))
-
-      setApplications(processedData)
-
+      setApplications(data.applications || [])
       setStats({
-        total: totalRes.count || 0,
-        pending: pendingRes.count || 0,
-        reviewed: reviewedRes.count || 0,
-        shortlisted: shortlistedRes.count || 0,
-        rejected: rejectedRes.count || 0,
-        hired: hiredRes.count || 0
+        total: data.filteredCount || 0,
+        pending: data.statusCounts?.pending || 0,
+        reviewed: data.statusCounts?.reviewed || 0,
+        shortlisted: data.statusCounts?.shortlisted || 0,
+        rejected: data.statusCounts?.rejected || 0,
+        hired: data.statusCounts?.hired || 0,
       })
     } catch (error) {
       console.error('Error fetching applications:', error)
@@ -230,57 +198,9 @@ export function JobApplicationsDashboard({ onSignOut, showHeader = true }: JobAp
         return
       }
       
-      // Handle different URL formats
-      let filePath = resumeUrl
-      
-      // If it's a full URL, extract the path
-      if (resumeUrl.startsWith('http')) {
-        const url = new URL(resumeUrl)
-        filePath = url.pathname.split('/').slice(-2).join('/') // Get last two parts of path
-      }
-      
-      // Remove leading slash if present
-      if (filePath.startsWith('/')) {
-        filePath = filePath.substring(1)
-      }
-      
-      console.log('Processed file path:', filePath)
-      
-      const { data, error } = await supabase.storage
-        .from('applications')
-        .download(filePath)
-
-      if (error) {
-        console.error('Storage download error:', error)
-        
-        // Try alternative bucket name
-        if (error.message.includes('bucket') || error.message.includes('not found')) {
-          console.log('Trying alternative bucket: resumes')
-          const { data: altData, error: altError } = await supabase.storage
-            .from('resumes')
-            .download(filePath)
-          
-          if (altError) {
-            console.error('Alternative bucket also failed:', altError)
-            throw new Error(`File not found: ${fileName}`)
-          }
-          
-          // Use alternative data
-          const url = URL.createObjectURL(altData)
-          const link = document.createElement('a')
-          link.href = url
-          link.download = fileName
-          document.body.appendChild(link)
-          link.click()
-          document.body.removeChild(link)
-          URL.revokeObjectURL(url)
-          toast.success("Resume downloaded successfully")
-          return
-        }
-        
-        throw error
-      }
-
+      const response = await fetch(resumeUrl)
+      if (!response.ok) throw new Error(`File not found: ${fileName}`)
+      const data = await response.blob()
       const url = URL.createObjectURL(data)
       const link = document.createElement('a')
       link.href = url

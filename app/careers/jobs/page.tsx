@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
 import { Header } from "@/components/header"
 import { Footer } from "@/components/footer"
 import { Search, Briefcase, MapPin, Clock, Building2, ChevronDown, X } from "lucide-react"
@@ -32,7 +31,6 @@ export default function JobsPage() {
   const [selectedLocation, setSelectedLocation] = useState<string>("all")
   const [isDepartmentOpen, setIsDepartmentOpen] = useState(false)
   const [isLocationOpen, setIsLocationOpen] = useState(false)
-  const supabase = createClientComponentClient()
   const router = useRouter()
 
   useEffect(() => {
@@ -44,50 +42,15 @@ export default function JobsPage() {
       setLoading(true)
       
       // Try to use the new API endpoint first (bypasses RLS)
-      try {
-        const response = await fetch('/api/careers/jobs')
-        
-        if (response.ok) {
-          const jobsData = await response.json()
-          
-          if (jobsData && Array.isArray(jobsData)) {
-            const validJobs = jobsData.map(job => ({
-              ...job,
-              requirements: Array.isArray(job.requirements) ? job.requirements : [],
-              responsibilities: Array.isArray(job.responsibilities) ? job.responsibilities : [],
-              status: job.status || 'active',
-              company: job.company || ''
-            }))
-            
-            setJobs(validJobs)
-            return // Success, no need for fallback
-          }
-        }
-        
-        // If API fails, log the error and fall back to direct query
-        console.warn('API endpoint failed, falling back to direct database query')
-        
-      } catch (apiError) {
-        console.warn('API endpoint error, falling back to direct database query:', apiError)
-      }
-      
-      // Fallback: Direct database query (this might be limited by RLS policies)
-      console.log('Using fallback direct database query')
-      
-      const { data: jobsData, error: jobsError } = await supabase
-        .from('jobs')
-        .select('*')
-        .eq('status', 'active')
-        .order('created_at', { ascending: false })
-
-      if (jobsError) {
-        console.error('Error fetching jobs from database:', jobsError)
+      const response = await fetch('/api/careers/jobs')
+      const jobsData = response.ok ? await response.json() : null
+      if (!response.ok) {
         toast.error("Failed to fetch jobs")
         return
       }
 
       if (!jobsData) {
-        console.warn('No jobs data returned from database')
+        console.warn('No jobs data returned from API')
         setJobs([])
         return
       }

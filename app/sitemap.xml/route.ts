@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
+import { query } from '@/lib/db'
 import { getNewsArticleSlug } from '@/lib/news-slug'
 
 export async function GET() {
@@ -36,10 +36,10 @@ export async function GET() {
   // Dynamic: published news articles (article-1, article-2, ...)
   let newsPages: { path: string; lastmod?: string }[] = []
   try {
-    const { data: articles } = await supabase
-      .from('news_articles')
-      .select('id, slug, publication_date')
-      .eq('published', true)
+    const result = await query(
+      `SELECT id, slug, publication_date FROM news_articles WHERE published = true`,
+    )
+    const articles = result.rows
     if (articles?.length) {
       newsPages = articles.map((a) => ({
         path: `/news/${getNewsArticleSlug(a)}`,

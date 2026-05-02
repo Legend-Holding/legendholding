@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
 import { useRouter } from "next/navigation"
 import { AdminDashboardLayout } from "@/components/admin/dashboard-layout"
 import { useAdminPermissions, type UserRole } from "@/hooks/use-admin-permissions"
@@ -97,7 +96,6 @@ function getRoleLabel(user: AdminUserRow): string {
 }
 
 export default function UserManagementPage() {
-  const supabase = createClientComponentClient()
   const router = useRouter()
   const { isSuperAdmin, isLoading: permLoading, userRole } = useAdminPermissions()
 

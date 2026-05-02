@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { supabase } from "@/lib/supabase"
+import { query } from "@/lib/db"
 
 // PATCH /api/admin/newsletters/[id]
 export async function PATCH(
@@ -10,26 +10,19 @@ export async function PATCH(
     const { status } = await req.json()
     const { id } = params
 
-    const { data, error } = await supabase
-      .from('newsletter_subscriptions')
-      .update({ 
-        status,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', id)
-      .select()
-      .single()
+    const result = await query(
+      `UPDATE newsletter_subscriptions SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+      [status, id],
+    )
 
-    if (error) throw error
-
-    if (!data) {
+    if (result.rows.length === 0) {
       return NextResponse.json(
         { error: "Newsletter subscription not found" },
         { status: 404 }
       )
     }
 
-    return NextResponse.json(data)
+    return NextResponse.json(result.rows[0])
   } catch (error) {
     console.error("Error updating newsletter subscription:", error)
     return NextResponse.json(
@@ -41,22 +34,18 @@ export async function PATCH(
 
 // DELETE /api/admin/newsletters/[id]
 export async function DELETE(
-  req: Request,
+  _req: Request,
   { params }: { params: { id: string } }
 ) {
   try {
     const { id } = params
 
-    const { data, error } = await supabase
-      .from('newsletter_subscriptions')
-      .delete()
-      .eq('id', id)
-      .select()
-      .single()
+    const result = await query(
+      `DELETE FROM newsletter_subscriptions WHERE id = $1 RETURNING id`,
+      [id],
+    )
 
-    if (error) throw error
-
-    if (!data) {
+    if (result.rows.length === 0) {
       return NextResponse.json(
         { error: "Newsletter subscription not found" },
         { status: 404 }
@@ -71,4 +60,7 @@ export async function DELETE(
       { status: 500 }
     )
   }
-} 
+}
+
+
+// PATCH /api/admin/newsletters/[id]

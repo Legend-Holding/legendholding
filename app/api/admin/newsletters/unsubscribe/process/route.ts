@@ -1,97 +1,53 @@
 import { NextResponse } from "next/server"
-import { supabase } from "@/lib/supabase"
+import { query, withTransaction } from "@/lib/db"
 
 export async function POST(req: Request) {
   try {
     const { requestId, action, adminComment } = await req.json()
 
     if (!requestId || !action) {
-      return NextResponse.json(
-        { error: "Request ID and action are required" },
-        { status: 400 }
-      )
+      return NextResponse.json({ error: "Request ID and action are required" }, { status: 400 })
     }
-
     if (!["approve", "reject"].includes(action)) {
-      return NextResponse.json(
-        { error: "Invalid action. Must be either 'approve' or 'reject'" },
-        { status: 400 }
-      )
+      return NextResponse.json({ error: "Invalid action. Must be either 'approve' or 'reject'" }, { status: 400 })
     }
 
-    // Find the unsubscribe request with the associated email
-    const { data: requests, error: requestError } = await supabase
-      .from('unsubscribe_requests')
-      .select(`
-        *,
-        newsletter_subscription:newsletter_subscriptions (
-          email
+    const reqResult = await query(
+      `SELECT ur.*, ns.email AS subscription_email
+       FROM unsubscribe_requests ur
+       LEFT JOIN newsletter_subscriptions ns ON ns.id = ur.newsletter_subscription_id
+       WHERE ur.id = $1 LIMIT 1`,
+      [requestId],
+    )
+    const request = reqResult.rows[0]
+    if (!request) {
+      return NextResponse.json({ error: "Unsubscribe request not found" }, { status: 404 })
+    }
+    if (request.status !== "pending") {
+      return NextResponse.json({ error: "This request has already been processed" }, { status: 400 })
+    }
+
+    await withTransaction(async (client) => {
+      await client.query(
+        `UPDATE unsubscribe_requests SET status = $1, admin_comment = $2, processed_at = NOW(), updated_at = NOW() WHERE id = $3`,
+        [action === "approve" ? "approved" : "rejected", adminComment || null, requestId],
+      )
+      if (action === "approve") {
+        await client.query(
+          `UPDATE newsletter_subscriptions SET status = 'unsubscribed', updated_at = NOW() WHERE id = $1`,
+          [request.newsletter_subscription_id],
         )
-      `)
-      .eq('id', requestId)
-      .single()
+      }
+    })
 
-    if (requestError || !requests) {
-      return NextResponse.json(
-        { error: "Unsubscribe request not found" },
-        { status: 404 }
-      )
-    }
-
-    if (requests.status !== "pending") {
-      return NextResponse.json(
-        { error: "This request has already been processed" },
-        { status: 400 }
-      )
-    }
-
-    // Update the request status
-    const { error: updateError } = await supabase
-      .from('unsubscribe_requests')
-      .update({
-        status: action === "approve" ? "approved" : "rejected",
-        admin_comment: adminComment || null,
-        processed_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', requestId)
-
-    if (updateError) throw updateError
-
-    // If approved, update the newsletter subscription status
-    if (action === "approve") {
-      const { error: subscriptionError } = await supabase
-        .from('newsletter_subscriptions')
-        .update({
-          status: 'unsubscribed',
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', requests.newsletter_subscription_id)
-
-      if (subscriptionError) throw subscriptionError
-
-      return NextResponse.json(
-        { 
-          message: "Unsubscribe request approved and processed successfully",
-          email: requests.newsletter_subscription.email
-        },
-        { status: 200 }
-      )
-    }
-
-    // If rejected
     return NextResponse.json(
-      { 
-        message: "Unsubscribe request rejected",
-        email: requests.newsletter_subscription.email
-      },
+      { message: action === "approve" ? "Unsubscribe request approved and processed successfully" : "Unsubscribe request rejected", email: request.subscription_email },
       { status: 200 }
     )
   } catch (error) {
     console.error("Error processing unsubscribe request:", error)
-    return NextResponse.json(
-      { error: "Failed to process unsubscribe request" },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: "Failed to process unsubscribe request" }, { status: 500 })
   }
-} 
+}
+
+

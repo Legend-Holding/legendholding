@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import { Loader2 } from "lucide-react"
@@ -38,7 +37,6 @@ export function JobApplicationForm({ jobId, jobTitle, company, isOpen, onClose }
     coverLetter: "",
   })
   const [resumeFile, setResumeFile] = useState<File | null>(null)
-  const supabase = createClientComponentClient()
   const router = useRouter()
 
 
@@ -117,19 +115,8 @@ export function JobApplicationForm({ jobId, jobTitle, company, isOpen, onClose }
       setLoading(true)
 
       try {
-        // First, create a unique filename and upload the resume
-        const fileExt = resumeFile.name.split(".").pop()?.toLowerCase() || ""
-        const timestamp = new Date().getTime()
-        fileName = `${timestamp}/${timestamp}.${fileExt}`
-
-        // Use base64 storage as primary method since storage buckets are having issues
-        let uploadSuccess = false
-        let finalFileName = fileName
-        let bucketUsed = 'base64'
-
-        // Strategy 1: Convert to base64 and store in database (primary method)
+        // Convert file to base64 and store in database
         try {
-          // Check file size - limit to 2MB for base64 conversion
           if (resumeFile.size > 2 * 1024 * 1024) {
             throw new Error('File too large for base64 conversion')
           }
@@ -153,82 +140,9 @@ export function JobApplicationForm({ jobId, jobTitle, company, isOpen, onClose }
           const base64Data = await Promise.race([base64Promise, timeoutPromise])
           
           finalFileName = base64Data
-          uploadSuccess = true
         } catch (error) {
           console.error("Base64 conversion failed:", error)
-        }
-
-        // Strategy 2: Try applications bucket as fallback (if base64 fails)
-        if (!uploadSuccess) {
-          try {
-            const { error: uploadError } = await supabase.storage
-              .from("applications")
-              .upload(fileName, resumeFile, {
-                cacheControl: "3600",
-                upsert: true,
-                contentType: resumeFile.type
-              })
-
-            if (!uploadError) {
-              uploadSuccess = true
-              bucketUsed = 'applications'
-            } else {
-              console.error("Applications bucket upload failed:", uploadError)
-            }
-          } catch (error) {
-            console.error("Applications bucket upload error:", error)
-          }
-        }
-
-        // Strategy 3: Try resumes bucket if applications failed
-        if (!uploadSuccess) {
-          try {
-            const { error: altUploadError } = await supabase.storage
-              .from("resumes")
-              .upload(fileName, resumeFile, {
-                cacheControl: "3600",
-                upsert: true,
-                contentType: resumeFile.type
-              })
-
-            if (!altUploadError) {
-              uploadSuccess = true
-              bucketUsed = 'resumes'
-              finalFileName = `resumes/${fileName}`
-            } else {
-              console.error("Resumes bucket upload also failed:", altUploadError)
-            }
-          } catch (error) {
-            console.error("Resumes bucket upload error:", error)
-          }
-        }
-
-        // Strategy 4: Try with a simpler path structure
-        if (!uploadSuccess) {
-          try {
-            const simpleFileName = `${timestamp}.${fileExt}`
-            
-            const { error: simpleUploadError } = await supabase.storage
-              .from("applications")
-              .upload(simpleFileName, resumeFile, {
-                cacheControl: "3600",
-                upsert: true,
-                contentType: resumeFile.type
-              })
-
-            if (!simpleUploadError) {
-              uploadSuccess = true
-              finalFileName = simpleFileName
-            } else {
-              console.error("Simple filename upload failed:", simpleUploadError)
-            }
-          } catch (error) {
-            console.error("Simple filename upload error:", error)
-          }
-        }
-
-        if (!uploadSuccess) {
-          throw new Error("All upload strategies failed. Please check your file and try again.")
+          throw new Error("Failed to process resume file")
         }
 
         // Store the file path for admin access

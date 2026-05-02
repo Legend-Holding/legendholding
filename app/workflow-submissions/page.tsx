@@ -12,7 +12,6 @@ import {
 } from "lucide-react"
 import * as XLSX from 'xlsx'
 import { toast } from "sonner"
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
 import {
   Table,
   TableBody,

@@ -4,7 +4,7 @@ import { Footer } from '@/components/footer';
 import Image from 'next/image';
 import { PageBanner } from '@/components/page-banner';
 import { Metadata } from 'next';
-import { createClient } from '@supabase/supabase-js';
+import { query } from '@/lib/db';
 
 export const metadata: Metadata = {
   title: 'Leadership Team | Legend Holding Group | Board of Directors & Management',
@@ -80,21 +80,15 @@ const fallbackChinaData: TeamMember[] = [
 
 async function fetchTeamData(): Promise<{ board: TeamMember[]; ksa: TeamMember[]; china: TeamMember[] }> {
   try {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    if (!supabaseUrl || !supabaseKey) throw new Error("Supabase not configured");
+    const result = await query(
+      `SELECT name, role, company, image, category, sort_order, is_spotlight, seo_description, linkedin
+       FROM team_members
+       WHERE is_visible = true
+       ORDER BY sort_order ASC`,
+    );
+    const data = result.rows;
 
-    const supabase = createClient(supabaseUrl, supabaseKey, {
-      auth: { persistSession: false },
-    });
-
-    const { data, error } = await supabase
-      .from("team_members")
-      .select("name, role, company, image, category, sort_order, is_spotlight, seo_description, linkedin")
-      .eq("is_visible", true)
-      .order("sort_order", { ascending: true });
-
-    if (error || !data || data.length === 0) throw new Error(error?.message || "No data");
+    if (!data || data.length === 0) throw new Error("No data");
 
     const pick = (m: typeof data[number]): TeamMember => ({
       name: m.name,

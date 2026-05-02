@@ -5,7 +5,6 @@ import Image from "next/image"
 import Link from "next/link"
 import { ArrowRight, Calendar, ChevronLeft, ChevronRight, Clock } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { supabase } from "@/lib/supabaseClient"
 import { getNewsArticleSlug } from "@/lib/news-slug"
 
 interface NewsArticleImage {
@@ -63,43 +62,20 @@ export function Newsroom() {
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
         setError(null)
-        
-        // Check if supabase client is properly configured
-        if (!supabase) {
-          console.error("Supabase client is not configured")
-          setError("Configuration error")
-          return
-        }
-        
-        const { data, error } = await supabase!
-          .from("news_articles")
-          .select("*")
-          .eq("published", true)
-          .order("publication_date", { ascending: false })
-          .limit(3) // Only fetch 3 latest news items
 
-        if (error) {
-          // If it's a network error and we have retries left, retry
-          if ((error.message.includes('fetch') || error.message.includes('network') || error.message.includes('timeout')) && attempt < retries) {
-            console.warn(`Attempt ${attempt} failed, retrying in ${delay}ms:`, {
-              message: error.message,
-              code: error.code
-            })
+        const response = await fetch("/api/news?limit=3")
+        if (!response.ok) {
+          if (attempt < retries) {
             await new Promise(resolve => setTimeout(resolve, delay))
-            delay *= 2 // Exponential backoff
+            delay *= 2
             continue
           }
-          
-          console.error("Supabase error:", {
-            message: error.message,
-            code: error.code,
-            details: error.details,
-            hint: error.hint,
-            attempt: attempt
-          })
           setError("Failed to load news articles")
           return
         }
+
+        const payload = await response.json()
+        const data = payload.articles || []
 
         if (!data || data.length === 0) {
           console.warn("No news articles found")

@@ -1,4 +1,3 @@
-import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { query } from "@/lib/db";
@@ -7,34 +6,22 @@ import { ADMIN_SESSION_COOKIE, verifyAdminSessionToken } from "@/lib/admin-auth"
 const BUSINESS_CARDS_ONLY_ADMIN_EMAIL = "admin@legendholding.com";
 
 async function requireCompaniesAccess() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!supabaseUrl || !serviceKey) {
-    return { error: NextResponse.json({ error: "Server config error" }, { status: 500 }), supabase: null };
-  }
   const cookieStore = await cookies();
   const token = cookieStore.get(ADMIN_SESSION_COOKIE)?.value;
   if (!token) {
-    return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }), supabase: null };
+    return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
   }
   const payload = verifyAdminSessionToken(token);
   if (!payload?.sub || !payload?.email) {
-    return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }), supabase: null };
+    return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
   }
 
-  const supabase = createClient(supabaseUrl, serviceKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-
   if (payload.email.toLowerCase() === BUSINESS_CARDS_ONLY_ADMIN_EMAIL) {
-    return { error: null, supabase };
+    return { error: null, payload };
   }
 
   const roleResult = await query<{ role: string; permissions: Record<string, boolean> | null }>(
-    `SELECT role, permissions
-     FROM user_roles
-     WHERE user_id = $1
-     LIMIT 1`,
+    `SELECT role, permissions FROM user_roles WHERE user_id = $1 LIMIT 1`,
     [payload.sub],
   );
   const roleData = roleResult.rows[0];
@@ -42,77 +29,65 @@ async function requireCompaniesAccess() {
   const isSuperAdmin = roleData?.role === "super_admin";
 
   if (!roleData || (!isSuperAdmin && !hasManagementProfilesPermission)) {
-    return { error: NextResponse.json({ error: "Forbidden" }, { status: 403 }), supabase: null };
+    return { error: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
   }
-  return { error: null, supabase };
+  return { error: null, payload };
 }
 
 export async function GET(request: Request) {
-  const { error, supabase } = await requireCompaniesAccess();
+  const { error } = await requireCompaniesAccess();
   if (error) return error;
   const { searchParams } = new URL(request.url);
   const q = searchParams.get("q")?.trim() ?? "";
   const onlyActive = searchParams.get("active") === "1";
-  let builder = supabase!
-    .from("companies")
-    .select("*")
-    .order("sort_order", { ascending: true })
-    .order("name", { ascending: true });
-  if (onlyActive) builder = builder.eq("is_active", true);
+
+  const conditions: string[] = [];
+  const values: unknown[] = [];
+  let i = 1;
+
+  if (onlyActive) { conditions.push(`is_active = TRUE`); }
   if (q) {
-    const escaped = q.replace(/[%_]/g, "\\$&");
-    builder = builder.or(
-      [
-        `name.ilike.%${escaped}%`,
-        `website.ilike.%${escaped}%`,
-        `address.ilike.%${escaped}%`,
-        `telephone.ilike.%${escaped}%`,
-      ].join(","),
-    );
+    const like = `%${q.replace(/[%_]/g, "\\$&")}%`;
+    conditions.push(`(name ILIKE $${i} OR website ILIKE $${i} OR address ILIKE $${i} OR telephone ILIKE $${i})`);
+    values.push(like); i++;
   }
-  const { data, error: err } = await builder;
-  if (err) return NextResponse.json({ error: err.message }, { status: 500 });
-  return NextResponse.json({ items: data ?? [] });
+
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const result = await query(
+    `SELECT * FROM companies ${where} ORDER BY sort_order ASC, name ASC`,
+    values,
+  );
+  return NextResponse.json({ items: result.rows });
 }
 
 export async function POST(request: Request) {
-  const { error, supabase } = await requireCompaniesAccess();
+  const { error } = await requireCompaniesAccess();
   if (error) return error;
   const body = await request.json().catch(() => ({}));
   const name = String(body.name ?? "").trim();
-  if (!name) {
-    return NextResponse.json({ error: "name is required" }, { status: 400 });
-  }
-  const { data: existing } = await supabase!
-    .from("companies")
-    .select("id")
-    .eq("name", name)
-    .maybeSingle();
-  if (existing) {
-    return NextResponse.json({ error: "A company with that name already exists" }, { status: 409 });
-  }
-  const { data: maxOrder } = await supabase!
-    .from("companies")
-    .select("sort_order")
-    .order("sort_order", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const sort_order = ((maxOrder as { sort_order: number } | null)?.sort_order ?? 0) + 1;
+  if (!name) return NextResponse.json({ error: "name is required" }, { status: 400 });
 
-  const { data: inserted, error: insertError } = await supabase!
-    .from("companies")
-    .insert({
+  const existing = await query(`SELECT id FROM companies WHERE name = $1 LIMIT 1`, [name]);
+  if (existing.rows.length > 0) return NextResponse.json({ error: "A company with that name already exists" }, { status: 409 });
+
+  const maxResult = await query(`SELECT COALESCE(MAX(sort_order), 0) AS max FROM companies`);
+  const sort_order = (maxResult.rows[0]?.max ?? 0) + 1;
+
+  const result = await query(
+    `INSERT INTO companies (name, logo, telephone, website, address, location_link, is_active, sort_order)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+    [
       name,
-      logo: String(body.logo ?? "").trim(),
-      telephone: String(body.telephone ?? "").trim(),
-      website: String(body.website ?? "").trim(),
-      address: String(body.address ?? "").trim(),
-      location_link: String(body.location_link ?? "").trim(),
-      is_active: body.is_active === false ? false : true,
+      String(body.logo ?? "").trim(),
+      String(body.telephone ?? "").trim(),
+      String(body.website ?? "").trim(),
+      String(body.address ?? "").trim(),
+      String(body.location_link ?? "").trim(),
+      body.is_active === false ? false : true,
       sort_order,
-    })
-    .select()
-    .single();
-  if (insertError) return NextResponse.json({ error: insertError.message }, { status: 500 });
-  return NextResponse.json(inserted);
+    ],
+  );
+  return NextResponse.json(result.rows[0]);
 }
+
+

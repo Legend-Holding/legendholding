@@ -7,6 +7,7 @@ declare global {
 
 function buildPool(): Pool | null {
   const {
+    DATABASE_URL,
     POSTGRES_HOST,
     POSTGRES_PORT,
     POSTGRES_DB,
@@ -15,6 +16,19 @@ function buildPool(): Pool | null {
     POSTGRES_SSL,
     POSTGRES_MAX_CONNECTIONS,
   } = process.env
+
+  const maxConns = POSTGRES_MAX_CONNECTIONS ? Number(POSTGRES_MAX_CONNECTIONS) : 10
+
+  // Prefer DATABASE_URL — avoids dotenv special-character parsing issues.
+  if (DATABASE_URL) {
+    return new Pool({
+      connectionString: DATABASE_URL,
+      ssl: false,
+      max: maxConns,
+      idleTimeoutMillis: 30_000,
+      connectionTimeoutMillis: 10_000,
+    })
+  }
 
   if (!POSTGRES_HOST || !POSTGRES_DB || !POSTGRES_USER) {
     return null
@@ -29,7 +43,7 @@ function buildPool(): Pool | null {
     user: POSTGRES_USER,
     password: POSTGRES_PASSWORD ?? '',
     ssl: sslEnabled ? { rejectUnauthorized: false } : false,
-    max: POSTGRES_MAX_CONNECTIONS ? Number(POSTGRES_MAX_CONNECTIONS) : 10,
+    max: maxConns,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
   })

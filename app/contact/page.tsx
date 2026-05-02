@@ -16,7 +16,6 @@ import {
   ChevronDown,
   ChevronRight,
 } from "lucide-react"
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
 import { toast } from "sonner"
 import Image from "next/image"
 import Link from "next/link"
@@ -24,7 +23,6 @@ import Newsletter from "@/components/newsletter"
 import { PageBanner } from "@/components/page-banner"
 
 export default function ContactPage() {
-  const supabase = createClientComponentClient()
   const [formData, setFormData] = useState({
     name: "",
     email: "",

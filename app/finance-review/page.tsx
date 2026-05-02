@@ -11,7 +11,6 @@ import {
   ChevronLeft
 } from "lucide-react"
 import { toast } from "sonner"
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
 import {
   Dialog,
   DialogContent,

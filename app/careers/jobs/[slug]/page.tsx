@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
 import { Header } from "@/components/header"
 import { Footer } from "@/components/footer"
 import { Button } from "@/components/ui/button"
@@ -44,7 +43,6 @@ export default function JobDetails() {
   const [loading, setLoading] = useState(true)
   const [isApplicationModalOpen, setIsApplicationModalOpen] = useState(false)
   const [similarJobs, setSimilarJobs] = useState<Job[]>([])
-  const supabase = createClientComponentClient()
 
   useEffect(() => {
     if (!jobId) return

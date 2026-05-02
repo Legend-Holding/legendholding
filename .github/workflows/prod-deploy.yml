@@ -1,0 +1,67 @@
+name: Legendholding - Prod Deploy
+
+on:
+  push:
+    branches: [pod-production]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ap-south-1
+  CLUSTER_NAME: legend-cluster
+  NAMESPACE: prod
+  ECR_REPOSITORY: legendholding
+  ECR_REGISTRY: 149681870207.dkr.ecr.ap-south-1.amazonaws.com
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::149681870207:role/github-eks-ci
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:prod-${{ github.sha }}
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:prod-latest
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ env.AWS_REGION }} \
+            --name ${{ env.CLUSTER_NAME }}
+
+      - uses: azure/setup-helm@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: Legend-Holding/k8s-templates
+          path: k8s-templates
+          token: ${{ secrets.INFRA_REPO_TOKEN }}
+
+      - uses: actions/checkout@v4
+        with:
+          repository: Legend-Holding/k8s-values
+          path: k8s-values
+          token: ${{ secrets.INFRA_REPO_TOKEN }}
+
+      - name: Deploy with Helm
+        run: |
+          helm upgrade --install legendholding \
+            k8s-templates/charts/app-base \
+            -f k8s-values/legendholding/prod.yaml \
+            --set image.tag=prod-${{ github.sha }} \
+            -n $NAMESPACE --create-namespace

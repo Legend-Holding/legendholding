@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
 import { format } from "date-fns"
 import {
   Table,
@@ -93,7 +92,6 @@ export default function ApplicationsPage() {
   const jobIdsCache = useRef<{ filter: string; ids: string[] } | null>(null)
   const jobMapCache = useRef<Map<string, Job>>(new Map())
   const fetchIdRef = useRef(0)
-  const supabase = createClientComponentClient()
 
   useEffect(() => {
     fetchApplications(1)
@@ -169,24 +167,7 @@ export default function ApplicationsPage() {
     if (!confirm('Are you sure you want to delete this application? This action cannot be undone.')) return
 
     try {
-      // First find the application to get the resume URL
-      const application = applications.find(app => app.id === id)
-      if (application) {
-        // Delete the resume file from storage
-        const resumeFileName = application.resume_url.split('/').pop()
-        if (resumeFileName) {
-          const { error: storageError } = await supabase
-            .storage
-            .from('resumes')
-            .remove([`public/${resumeFileName}`])
-
-          if (storageError) {
-            console.error('Error deleting resume file:', storageError)
-          }
-        }
-      }
-
-      // Then delete the application record
+      // Delete the application record
       const delRes = await fetch(`/api/admin/applications/${id}`, { method: 'DELETE' })
       const delData = await delRes.json().catch(() => ({}))
       if (!delRes.ok) throw new Error(delData?.error || 'Failed to delete application')
@@ -511,39 +492,10 @@ export default function ApplicationsPage() {
         return;
       }
       
-      // For storage paths, try public URL approach
-      let filePath = url;
-      if (filePath.startsWith('/')) {
-        filePath = filePath.substring(1);
-      }
-      
-      console.log('Processed file path:', filePath);
-      
-      // Try getting public URL from resumes bucket
-      const { data: publicUrlData } = supabase.storage
-        .from('resumes')
-        .getPublicUrl(filePath);
-      
-      if (publicUrlData?.publicUrl) {
-        console.log('Public URL:', publicUrlData.publicUrl);
-        window.open(publicUrlData.publicUrl, '_blank');
-        toast.success('Resume opened in new tab');
-        return;
-      }
-      
-      // Try getting public URL from applications bucket
-      const { data: publicUrlData2 } = supabase.storage
-        .from('applications')
-        .getPublicUrl(filePath);
-      
-      if (publicUrlData2?.publicUrl) {
-        console.log('Public URL from applications:', publicUrlData2.publicUrl);
-        window.open(publicUrlData2.publicUrl, '_blank');
-        toast.success('Resume opened in new tab');
-        return;
-      }
-      
-      throw new Error('Unable to generate preview URL');
+      // For non-data, non-http paths, attempt direct open
+      window.open(url, '_blank');
+      toast.success('Resume opened in new tab');
+      return;
       
     } catch (error) {
       console.error('Error previewing resume:', error);
