@@ -167,10 +167,8 @@ export function NewsPage() {
       
       setFeaturedArticle(featuredArticle)
 
-      // Set all articles for the carousel (excluding the current featured article to avoid duplication)
-      const currentFeaturedId = featuredArticle ? featuredArticle.id : null
-      const articlesForCarousel = articlesWithImages.filter(article => article.id !== currentFeaturedId)
-      setAllArticles(articlesForCarousel)
+      // All articles go into the carousel/listing — the featured section is just a highlight at the top
+      setAllArticles(articlesWithImages)
     } catch (error) {
       console.error("Error fetching articles:", {
         message: error instanceof Error ? error.message : 'Unknown error',

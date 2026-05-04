@@ -8,7 +8,7 @@ export async function GET(request: Request) {
     const excludeId = searchParams.get("excludeId");
     const category = searchParams.get("category");
 
-    const limit = Number.isFinite(Number(limitParam)) ? Math.max(1, Math.min(50, Number(limitParam))) : null;
+    const limit = limitParam && Number.isFinite(Number(limitParam)) ? Math.max(1, Math.min(50, Number(limitParam))) : null;
 
     const conditions = ["published = true"];
     const values: unknown[] = [];
