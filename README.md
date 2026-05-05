@@ -10,6 +10,8 @@ A modern, responsive website for Legend Holding Group built with Next.js 15, Rea
 - Hero section with video background
 - Interactive components and animations
 
+
+
 ## Tech Stack
 
 - Next.js 15.2.4
