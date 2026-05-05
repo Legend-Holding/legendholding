@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AdminDashboardLayout } from "@/components/admin/dashboard-layout";
 import { Button } from "@/components/ui/button";
@@ -35,7 +36,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
-import { Edit2, Trash2, Plus, ExternalLink, Building2 } from "lucide-react";
+import { Edit2, Trash2, Plus, ExternalLink, Building2, ArrowLeft } from "lucide-react";
 
 interface Company {
   id: string;
@@ -209,10 +210,18 @@ export default function CompaniesPage() {
   return (
     <AdminDashboardLayout onSignOut={handleSignOut}>
       <div className="p-6">
+        <div className="mb-4">
+          <Button variant="ghost" size="sm" className="-ml-2 h-8 px-2 text-muted-foreground hover:text-foreground" asChild>
+            <Link href="/admin/management-profiles">
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back to Digital Business Cards
+            </Link>
+          </Button>
+        </div>
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Building2 className="h-6 w-6" />
-            Companies
+            Management
           </h1>
           <Button
             onClick={() => {

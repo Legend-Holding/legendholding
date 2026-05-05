@@ -42,7 +42,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-import { Edit2, Trash2, Plus, ExternalLink, QrCode, Download } from "lucide-react";
+import { Edit2, Trash2, Plus, ExternalLink, QrCode, Download, Building2 } from "lucide-react";
 
 interface ManagementProfile {
   id: string;
@@ -508,14 +508,22 @@ export default function ManagementProfilesPage() {
   return (
     <AdminDashboardLayout onSignOut={handleSignOut}>
       <div className="p-6">
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-start justify-between gap-4 mb-6">
           <h1 className="text-2xl font-bold">Digital Business Cards</h1>
-          {activeTab === "new" ? (
-            <Button onClick={() => { setForm(emptyForm); setIsAddOpen(true); }}>
-              <Plus className="h-4 w-4 mr-2" />
-              Add person
+          <div className="flex flex-col items-end gap-2 shrink-0">
+            <Button variant="outline" asChild>
+              <Link href="/admin/companies">
+                <Building2 className="h-4 w-4 mr-2" />
+                Management
+              </Link>
             </Button>
-          ) : null}
+            {activeTab === "new" ? (
+              <Button onClick={() => { setForm(emptyForm); setIsAddOpen(true); }}>
+                <Plus className="h-4 w-4 mr-2" />
+                Add person
+              </Button>
+            ) : null}
+          </div>
         </div>
         <p className="text-muted-foreground text-sm mb-4">
           Manage profiles for QR-code business cards. Profile pages: /profile/[slug]
@@ -744,7 +752,7 @@ function ProfileForm({
   setForm: React.Dispatch<React.SetStateAction<typeof emptyForm>>;
   companies: CompanyOption[];
 }) {
-  // Prefer companies coming from the new Companies tab; fall back to the hardcoded
+  // Prefer companies coming from the Management page; fall back to the hardcoded
   // list so the dropdown still works if the migration hasn't been run yet.
   const dynamicNames = companies.map((c) => c.name);
   const baseNames = dynamicNames.length > 0 ? dynamicNames : COMPANY_OPTIONS;

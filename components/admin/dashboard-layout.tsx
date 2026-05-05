@@ -21,7 +21,6 @@ import {
   Contact,
   Users,
   UserCog,
-  Building2
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -104,13 +103,6 @@ const menuItems = [
     superAdminOnly: false
   },
   {
-    title: "Companies",
-    icon: Building2,
-    href: "/admin/companies",
-    permission: "management_profiles" as const,
-    superAdminOnly: false
-  },
-  {
     title: "Team Members",
     icon: Users,
     href: "/admin/team-members",
@@ -130,13 +122,23 @@ const systemMenuItems: typeof menuItems = [
   // Settings option removed as requested
 ]
 
+/** Sidebar highlight for Digital Business Cards when on profiles or management admin pages */
+function isDigitalBusinessCardsNavActive(path: string) {
+  return (
+    path === "/admin/management-profiles" ||
+    path.startsWith("/admin/management-profiles/") ||
+    path === "/admin/companies" ||
+    path.startsWith("/admin/companies/")
+  )
+}
+
 export function AdminDashboardLayout({ children, onSignOut }: AdminDashboardLayoutProps) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const pathname = usePathname()
   const router = useRouter()
   const { userRole, isLoading, isSuperAdmin, isBusinessCardsOnlyAdmin, hasPermission, roleLabel } = useAdminPermissions()
 
-  // Business-cards-only admin: only allow management-profiles + companies tabs
+  // Business-cards-only admin: only allow management-profiles + management (company defaults) pages
   useEffect(() => {
     if (isLoading || !isBusinessCardsOnlyAdmin) return
     const allowedPaths = ["/admin/management-profiles", "/admin/companies"]
@@ -202,7 +204,10 @@ export function AdminDashboardLayout({ children, onSignOut }: AdminDashboardLayo
                 ) : (
                   <SidebarMenu className="space-y-0.5">
                     {menuItems.map((item) => {
-                      const isActive = pathname === item.href
+                      const isActive =
+                        item.href === "/admin/management-profiles"
+                          ? isDigitalBusinessCardsNavActive(pathname)
+                          : pathname === item.href
                       const hasAccess = hasPermission(item.permission)
                       const isSuperAdminOnly = item.superAdminOnly && !isSuperAdmin
                       
