@@ -21,6 +21,7 @@ import {
   Contact,
   Users,
   UserCog,
+  Smartphone,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -100,6 +101,13 @@ const menuItems = [
     icon: Contact,
     href: "/admin/management-profiles",
     permission: "management_profiles" as const,
+    superAdminOnly: false
+  },
+  {
+    title: "App QR Code",
+    icon: Smartphone,
+    href: "/admin/app-qr",
+    permission: "dashboard" as const,
     superAdminOnly: false
   },
   {
