@@ -34,6 +34,9 @@ jobs:
           context: .
           file: Dockerfile
           push: true
+          build-args: |
+            NEXT_PUBLIC_APP_STORE_URL=https://apps.apple.com/us/app/legend-car-rental/id6759277246
+            NEXT_PUBLIC_PLAY_STORE_URL=https://play.google.com/store/apps/details?id=com.legendgroup.carrental.app
           tags: |
             ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:prod-${{ github.sha }}
             ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:prod-latest
