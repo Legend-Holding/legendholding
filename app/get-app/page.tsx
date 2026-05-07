@@ -27,6 +27,28 @@ function detectPlatform(userAgent: string): Platform {
   return "other";
 }
 
+/**
+ * Build an Android `market://` deep link from the configured
+ * https://play.google.com/store/apps/details?id=... URL.
+ *
+ * Android intercepts the `market://` scheme via the Play Store
+ * app and launches it directly — no browser confirmation, same
+ * UX as iOS opening the App Store from `apps.apple.com` links.
+ *
+ * Falls back to the original https URL if the package id can't
+ * be parsed (e.g. URL was set to something custom).
+ */
+function buildAndroidPlayDeepLink(playStoreUrl: string): string {
+  try {
+    const parsed = new URL(playStoreUrl);
+    const id = parsed.searchParams.get("id");
+    if (id) return `market://details?id=${id}`;
+  } catch {
+    // fall through to the configured URL
+  }
+  return playStoreUrl;
+}
+
 export default async function GetAppPage() {
   const headerList = await headers();
   const userAgent = headerList.get("user-agent") || "";
@@ -36,7 +58,7 @@ export default async function GetAppPage() {
     redirect(APP_STORE_URL);
   }
   if (platform === "android") {
-    redirect(PLAY_STORE_URL);
+    redirect(buildAndroidPlayDeepLink(PLAY_STORE_URL));
   }
 
   return (
